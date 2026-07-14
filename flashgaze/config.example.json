@@ -1,0 +1,13 @@
+{
+  "api_key": "",
+  "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  "model": "qwen-vl-max",
+  "timeout_sec": 30,
+  "max_retries": 3,
+  "workers": 4,
+  "weights": {
+    "sharpness": 0.5,
+    "exposure": 0.5
+  },
+  "vlm_max_adjustment": 10
+}
