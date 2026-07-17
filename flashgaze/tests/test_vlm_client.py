@@ -22,6 +22,8 @@ def _make_cv() -> CVResult:
 def _ok_response(adjustment: float, reason: str = "ok") -> MagicMock:
     """构造一个成功的 HTTP 响应 mock。"""
     resp = MagicMock(spec=requests.Response)
+    resp.status_code = 200
+    resp.headers = {}
     resp.raise_for_status.return_value = None
     resp.json.return_value = {
         "choices": [
@@ -32,6 +34,14 @@ def _ok_response(adjustment: float, reason: str = "ok") -> MagicMock:
             }
         ]
     }
+    return resp
+
+
+def _rate_limit_response(retry_after: str = "2") -> MagicMock:
+    """构造 429 限流响应。"""
+    resp = MagicMock(spec=requests.Response)
+    resp.status_code = 429
+    resp.headers = {"Retry-After": retry_after}
     return resp
 
 
@@ -126,6 +136,8 @@ def test_http_error_does_not_retry(sharp_img: str, monkeypatch):
     def fake_post(*a, **kw):
         calls["n"] += 1
         resp = MagicMock(spec=requests.Response)
+        resp.status_code = 401
+        resp.headers = {}
         resp.raise_for_status.side_effect = requests.HTTPError("401")
         return resp
 
@@ -137,11 +149,45 @@ def test_http_error_does_not_retry(sharp_img: str, monkeypatch):
     assert calls["n"] == 1  # 未重试
 
 
+def test_429_rate_limit_retries_then_success(sharp_img: str, monkeypatch):
+    """429 限流后重试成功：第一次 429，第二次成功。"""
+    calls = {"n": 0}
+
+    def fake_post(*a, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return _rate_limit_response("1")
+        return _ok_response(3.0)
+
+    monkeypatch.setattr("flashgaze.core.vlm_client.requests.post", fake_post)
+    monkeypatch.setattr("flashgaze.core.vlm_client.time.sleep", lambda s: None)
+    client = VLMClient(api_key="k", api_base="http://x", model="m", max_retries=3)
+    result = client.judge(sharp_img, _make_cv())
+    assert result.ok is True
+    assert result.adjustment == 3.0
+    assert calls["n"] == 2
+
+
+def test_429_rate_limit_exhausted(sharp_img: str, monkeypatch):
+    """429 限流重试耗尽返回失败。"""
+    monkeypatch.setattr(
+        "flashgaze.core.vlm_client.requests.post",
+        lambda *a, **kw: _rate_limit_response("1"),
+    )
+    monkeypatch.setattr("flashgaze.core.vlm_client.time.sleep", lambda s: None)
+    client = VLMClient(api_key="k", api_base="http://x", model="m", max_retries=2)
+    result = client.judge(sharp_img, _make_cv())
+    assert result.ok is False
+    assert result.error == "retry_exhausted"
+
+
 # ---------- 解析容错 ----------
 
 def test_parse_non_json_content(sharp_img: str, monkeypatch):
     """VLM 返回非 JSON 文本时容错。"""
     resp = MagicMock(spec=requests.Response)
+    resp.status_code = 200
+    resp.headers = {}
     resp.raise_for_status.return_value = None
     resp.json.return_value = {
         "choices": [{"message": {"content": "这不是JSON"}}]
@@ -156,6 +202,8 @@ def test_parse_non_json_content(sharp_img: str, monkeypatch):
 def test_parse_missing_choices(sharp_img: str, monkeypatch):
     """响应结构异常时容错。"""
     resp = MagicMock(spec=requests.Response)
+    resp.status_code = 200
+    resp.headers = {}
     resp.raise_for_status.return_value = None
     resp.json.return_value = {"error": "internal"}
     monkeypatch.setattr("flashgaze.core.vlm_client.requests.post", lambda *a, **kw: resp)

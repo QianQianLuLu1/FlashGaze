@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from flashgaze.core.cv_engine import CVEngine
 from flashgaze.core.vlm_client import VLMClient
@@ -32,18 +32,28 @@ class HybridScorer:
         """并发评分目录下所有图片，按综合分降序返回。"""
         return self.score_paths(list(iter_images(directory)))
 
-    def score_paths(self, image_paths: list[str]) -> list[ImageScore]:
+    def score_paths(
+        self,
+        image_paths: list[str],
+        progress_callback: Optional[Callable[[int, int], None]] = None,
+    ) -> list[ImageScore]:
         """对给定路径列表评分，按综合分降序返回。
 
         供 MCP 上传模式与 CLI 缓存复用，避免目录双重遍历。
+        progress_callback(done, total) 在每张图评分完成后被调用，用于进度反馈。
         """
         if not image_paths:
             return []
         results: list[ImageScore] = []
+        total = len(image_paths)
+        done = 0
         with ThreadPoolExecutor(max_workers=self.config.workers) as pool:
             futures = {pool.submit(self.score_one, p): p for p in image_paths}
             for fut in as_completed(futures):
                 results.append(fut.result())
+                done += 1
+                if progress_callback is not None:
+                    progress_callback(done, total)
         # 按 score 降序，同分按文件名升序，保证排序稳定可复现
         results.sort(key=lambda s: (-s.score, s.file))
         self._mark_selected(results)
@@ -65,7 +75,9 @@ class HybridScorer:
             )
         base = self._weighted_cv_score(cv)
         vlm_adj = 0.0
-        if self.vlm_client is not None and not self.config.no_vlm:
+        # vlm_client 仅在 not no_vlm 时被构造（见 entry.py 与 mcp_server._make_vlm_client），
+        # 故 self.vlm_client is not None 已隐含 not no_vlm
+        if self.vlm_client is not None:
             vlm = self.vlm_client.judge(img_path, cv)
             vlm_adj = vlm.adjustment if vlm.ok else 0.0
         final = max(0.0, min(100.0, base + vlm_adj))

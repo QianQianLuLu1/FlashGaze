@@ -5,7 +5,11 @@
 
 from __future__ import annotations
 
+import cv2
+import numpy as np
+
 from flashgaze.core.cv_engine import CVEngine
+from flashgaze.defaults import EXPOSURE_BRIGHT_THRESHOLD, EXPOSURE_DARK_THRESHOLD
 from flashgaze.utils.image_io import ImageReadError
 
 
@@ -55,6 +59,37 @@ def test_exposure_is_deterministic(sharp_img: str):
     engine = CVEngine()
     scores = [engine.compute_exposure(sharp_img) for _ in range(10)]
     assert len(set(scores)) == 1, f"曝光度不稳定: {scores}"
+
+
+def test_exposure_boundary_excludes_threshold(tmp_path):
+    """C-06：边界语义为"不含阈值本身"。
+
+    构造一张全 EXPOSURE_BRIGHT_THRESHOLD(225) 值的图：
+    - 旧逻辑 hist[BRIGHT:] 会把 225 算入 over_bright → 曝光分低
+    - 新逻辑 hist[BRIGHT+1:] 不含 225 → 225 属于 mid 区 → 曝光分高
+    """
+    boundary = EXPOSURE_BRIGHT_THRESHOLD  # 225
+    img = np.full((64, 64), boundary, dtype=np.uint8)
+    p = str(tmp_path / "boundary.png")
+    cv2.imwrite(p, img)
+    score = CVEngine().compute_exposure(p)
+    # 225 属于中间灰度，曝光分应较高（不被判为过曝）
+    assert score > 60.0, f"边界值 {boundary} 应属中间灰度，曝光分应高，实际: {score}"
+
+
+def test_exposure_boundary_dark_threshold(tmp_path):
+    """C-06：DARK_THRESHOLD(30) 边界——值为 30 不算过暗。"""
+    boundary = EXPOSURE_DARK_THRESHOLD  # 30
+    img = np.full((64, 64), boundary, dtype=np.uint8)
+    p = str(tmp_path / "dark_boundary.png")
+    cv2.imwrite(p, img)
+    score = CVEngine().compute_exposure(p)
+    # 30 属于中间灰度（[:DARK] 不含 30），曝光分应高于全黑图
+    black = np.zeros((64, 64), dtype=np.uint8)
+    p_black = str(tmp_path / "black.png")
+    cv2.imwrite(p_black, black)
+    black_score = CVEngine().compute_exposure(p_black)
+    assert score > black_score, f"值 {boundary} 不应被算作过暗"
 
 
 # ---------- 构图 ----------

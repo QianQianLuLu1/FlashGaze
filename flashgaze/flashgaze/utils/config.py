@@ -11,7 +11,7 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any, Optional
 
-from flashgaze.defaults import(
+from flashgaze.defaults import (
     DEFAULT_API_BASE,
     DEFAULT_MAX_RETRIES,
     DEFAULT_MODEL,
@@ -25,8 +25,10 @@ from flashgaze.defaults import(
     ENV_MODEL,
     ENV_TIMEOUT,
     ENV_VLM_MAX_ADJUSTMENT,
+    ENV_WEIGHTS,
     ENV_WORKERS,
 )
+from flashgaze.models.schemas import Config
 
 
 def load_config_file(path: str | Path) -> dict[str, Any]:
@@ -69,6 +71,22 @@ def merge_env() -> dict[str, Any]:
             cfg["vlm_max_adjustment"] = float(os.environ[ENV_VLM_MAX_ADJUSTMENT])
         except ValueError:
             pass
+    if os.environ.get(ENV_WEIGHTS):
+        try:
+            raw = json.loads(os.environ[ENV_WEIGHTS])
+            if isinstance(raw, dict) and "sharpness" in raw and "exposure" in raw:
+                s = float(raw["sharpness"])
+                e = float(raw["exposure"])
+                # F-05：composition 为可选 key，存在时一并归一化
+                c = float(raw["composition"]) if "composition" in raw else 0.0
+                total = s + e + c
+                if total > 0:
+                    weights = {"sharpness": s / total, "exposure": e / total}
+                    if "composition" in raw:
+                        weights["composition"] = c / total
+                    cfg["weights"] = weights
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
     return cfg
 
 
@@ -86,30 +104,19 @@ def default_config_dict() -> dict[str, Any]:
 
 
 # Config dataclass 合法字段名集合（构造时过滤非法 key，避免 TypeError）
-_CONFIG_FIELD_NAMES: set[str] = set()
-
-
-def _get_config_field_names() -> set[str]:
-    """惰性获取 Config 字段名集合（避免模块加载期循环导入）。"""
-    global _CONFIG_FIELD_NAMES
-    if not _CONFIG_FIELD_NAMES:
-        from flashgaze.models.schemas import Config
-        _CONFIG_FIELD_NAMES = {f.name for f in fields(Config)}
-    return _CONFIG_FIELD_NAMES
+_CONFIG_FIELD_NAMES: set[str] = {f.name for f in fields(Config)}
 
 
 def build_config(
     directory: str,
     file_cfg: Optional[dict[str, Any]] = None,
     **overrides: Any,
-) -> "Config":  # type: ignore[name-defined]
+) -> Config:
     """装配 Config。优先级：overrides > env > file > default。
 
     CLI 与 MCP 共用此函数，消除两处重复的 env 读取 + 默认值填充逻辑。
     overrides 中值为 None 的键不参与覆盖（保留下层值）。
     """
-    from flashgaze.models.schemas import Config  # 局部导入避免循环依赖
-
     defaults = default_config_dict()
     env = merge_env()
     file_cfg = file_cfg or {}
@@ -122,6 +129,6 @@ def build_config(
             base[k] = v
 
     # 过滤掉非 Config 字段，避免构造报错
-    valid = _get_config_field_names()
+    valid = _CONFIG_FIELD_NAMES
     kwargs = {k: v for k, v in base.items() if k in valid and k != "directory"}
     return Config(directory=directory, **kwargs)

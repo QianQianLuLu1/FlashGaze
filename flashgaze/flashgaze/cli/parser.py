@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from flashgaze import __version__
 from flashgaze.defaults import DEFAULT_EXPORT_DIR, DEFAULT_TOP
@@ -43,6 +44,11 @@ class CLIParser:
         p.add_argument("--api-base", dest="api_base", default=None, help="API 端点")
         p.add_argument("--model", default=None, help="模型名称")
         p.add_argument("--workers", type=int, default=None, help="并发线程数")
+        p.add_argument(
+            "--weights", default=None,
+            help='评分权重 JSON（如 \'{"sharpness":0.7,"exposure":0.3}\' 或 \'{"sharpness":0.5,"exposure":0.3,"composition":0.2}\'），'
+                 'composition 可选，也可用环境变量 FLASHGAZE_WEIGHTS',
+        )
         p.add_argument("--config-file", dest="config_file", default=None, help="配置文件路径（JSON）")
         p.add_argument("--verbose", action="store_true", help="详细日志（stderr）")
         p.add_argument("--version", action="version", version=f"flashgaze {__version__}")
@@ -54,6 +60,24 @@ class CLIParser:
 
         # 配置文件层
         file_cfg = load_config_file(args.config_file) if args.config_file else {}
+
+        # 解析 --weights CLI 参数
+        weights_override = None
+        if args.weights:
+            try:
+                raw = json.loads(args.weights)
+                if isinstance(raw, dict) and "sharpness" in raw and "exposure" in raw:
+                    s = float(raw["sharpness"])
+                    e = float(raw["exposure"])
+                    # F-05：composition 为可选 key，存在时一并归一化
+                    c = float(raw["composition"]) if "composition" in raw else 0.0
+                    total = s + e + c
+                    if total > 0:
+                        weights_override = {"sharpness": s / total, "exposure": e / total}
+                        if "composition" in raw:
+                            weights_override["composition"] = c / total
+            except (json.JSONDecodeError, ValueError, TypeError):
+                pass
 
         # 统一调用 build_config 装配（CLI args 作为 overrides 覆盖 env/file/default）
         # 注意：args 中未传的可选参数为 None，build_config 会跳过 None 值
@@ -75,5 +99,6 @@ class CLIParser:
             api_base=args.api_base,
             model=args.model,
             workers=args.workers,
+            weights=weights_override,
             verbose=args.verbose,
         )

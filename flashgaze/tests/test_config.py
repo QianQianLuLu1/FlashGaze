@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from flashgaze.utils.config import default_config_dict, load_config_file, merge_env
-from flashgaze.defaults import DEFAULT_API_BASE, DEFAULT_MODEL, DEFAULT_WORKERS
+from flashgaze.defaults import DEFAULT_API_BASE, DEFAULT_MODEL, DEFAULT_WEIGHTS, DEFAULT_WORKERS
 
 
 # ---------- load_config_file ----------
@@ -91,3 +93,59 @@ def test_default_config_dict_values():
     assert cfg["workers"] == DEFAULT_WORKERS
     assert "weights" in cfg
     assert "vlm_max_adjustment" in cfg
+
+
+# ---------- C-07: DEFAULT_WEIGHTS 不可变性 ----------
+
+def test_default_weights_is_immutable():
+    """DEFAULT_WEIGHTS 是 MappingProxyType，原地修改应抛 TypeError。"""
+    with pytest.raises(TypeError):
+        DEFAULT_WEIGHTS["sharpness"] = 0.9  # type: ignore[index]
+
+
+def test_default_weights_read_compatible():
+    """MappingProxyType 读取接口与 dict 兼容。"""
+    assert DEFAULT_WEIGHTS["sharpness"] == 0.5
+    assert DEFAULT_WEIGHTS.get("exposure") == 0.5
+    assert dict(DEFAULT_WEIGHTS) == {"sharpness": 0.5, "exposure": 0.5}
+
+
+# ---------- F-05: weights composition key ----------
+
+def test_merge_env_weights_with_composition(monkeypatch):
+    """FLASHGAZE_WEIGHTS 含 composition 时三键归一化。"""
+    monkeypatch.setenv(
+        "FLASHGAZE_WEIGHTS",
+        json.dumps({"sharpness": 0.5, "exposure": 0.3, "composition": 0.2}),
+    )
+    cfg = merge_env()
+    w = cfg["weights"]
+    assert w["sharpness"] == 0.5  # 0.5/1.0
+    assert w["exposure"] == 0.3   # 0.3/1.0
+    assert w["composition"] == 0.2  # 0.2/1.0
+
+
+def test_merge_env_weights_without_composition(monkeypatch):
+    """FLASHGAZE_WEIGHTS 不含 composition 时仍为两键（向后兼容）。"""
+    monkeypatch.setenv(
+        "FLASHGAZE_WEIGHTS",
+        json.dumps({"sharpness": 0.7, "exposure": 0.3}),
+    )
+    cfg = merge_env()
+    w = cfg["weights"]
+    assert w["sharpness"] == 0.7
+    assert w["exposure"] == 0.3
+    assert "composition" not in w
+
+
+def test_merge_env_weights_composition_normalized(monkeypatch):
+    """composition 权重非归一化输入时正确归一化。"""
+    monkeypatch.setenv(
+        "FLASHGAZE_WEIGHTS",
+        json.dumps({"sharpness": 2, "exposure": 2, "composition": 1}),
+    )
+    cfg = merge_env()
+    w = cfg["weights"]
+    assert w["sharpness"] == 0.4  # 2/5
+    assert w["exposure"] == 0.4   # 2/5
+    assert w["composition"] == 0.2  # 1/5

@@ -1,13 +1,15 @@
 """VLMClient：VLM 场景补偿客户端。
 
 封装 Qwen-VL / GPT-4o-mini 等 OpenAI 兼容 API，仅作 ±max_adjustment 的微调。
-含指数退避重试、超时控制、JSON 解析容错。
+含指数退避重试、超时控制、429 限流处理、JSON 解析容错。
 """
 
 from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Optional
 
 import requests
@@ -76,7 +78,10 @@ class VLMClient:
         )
 
     def _post_with_retry(self, payload: dict) -> Optional[dict]:
-        """POST 请求，仅对超时/连接错误重试。4xx/5xx 不重试（不可恢复）。"""
+        """POST 请求，对超时/连接错误/429 限流重试。4xx(非429)/5xx 不重试。
+
+        429 时优先使用 Retry-After header 指定的等待时间，否则指数退避。
+        """
         url = f"{self.api_base}/chat/completions"
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -87,15 +92,40 @@ class VLMClient:
                 resp = requests.post(
                     url, headers=headers, json=payload, timeout=self.timeout_sec
                 )
+                if resp.status_code == 429:
+                    retry_after = self._parse_retry_after(resp)
+                    if attempt < self.max_retries - 1:
+                        time.sleep(retry_after)
+                        continue
+                    return None
                 resp.raise_for_status()
                 return resp.json()
             except (requests.Timeout, requests.ConnectionError):
                 if attempt == self.max_retries - 1:
                     return None
-                time.sleep(2 ** attempt)  # 1s, 2s（max_retries=3 时）
+                time.sleep(2 ** attempt)
             except requests.HTTPError:
                 return None
         return None
+
+    @staticmethod
+    def _parse_retry_after(resp: requests.Response) -> float:
+        """解析 Retry-After header。支持秒数和 HTTP 日期格式。"""
+        raw = resp.headers.get("Retry-After")
+        if not raw:
+            return 1.0  # 默认 1 秒
+        try:
+            return float(raw)
+        except ValueError:
+            try:
+                dt = parsedate_to_datetime(raw)
+                if dt is None:
+                    return 1.0
+                now = datetime.now(timezone.utc)
+                diff = (dt - now).total_seconds()
+                return max(1.0, min(diff, 60.0))
+            except Exception:
+                return 1.0
 
     def _parse_response(self, data: dict) -> VLMResult:
         """解析 VLM 返回的 JSON。容错：超范围 clamp，解析失败返回 0 补偿。"""

@@ -1,16 +1,18 @@
 """CVEngine：客观评分引擎。
 
-清晰度（拉普拉斯方差）、曝光度（直方图分布）、构图（三分法，实验性）。
+清晰度（拉普拉斯方差 + 尺寸归一化）、曝光度（直方图分布 + 均值偏差）、构图（三分法，实验性）。
 所有方法对同一图片多次调用结果恒定（无随机性），保证可复现。
 """
 
 from __future__ import annotations
 
 import cv2
+import numpy as np
 
 from flashgaze.defaults import (
     EXPOSURE_BRIGHT_THRESHOLD,
     EXPOSURE_DARK_THRESHOLD,
+    SHARPNESS_NORMALIZE_SIZE,
     SHARPNESS_VARIANCE_CEIL,
 )
 from flashgaze.models.schemas import CVResult
@@ -37,22 +39,38 @@ class CVEngine:
         except Exception as e:
             return CVResult(0.0, 0.0, None, error=f"CV 评估失败: {e}")
 
+    def _normalize_size(self, gray: np.ndarray) -> np.ndarray:
+        """将图片长边缩放到 SHARPNESS_NORMALIZE_SIZE，消除分辨率对评分的影响。"""
+        h, w = gray.shape[:2]
+        long_side = max(h, w)
+        if long_side <= SHARPNESS_NORMALIZE_SIZE:
+            return gray
+        scale = SHARPNESS_NORMALIZE_SIZE / long_side
+        new_size = (int(w * scale), int(h * scale))
+        return cv2.resize(gray, new_size, interpolation=cv2.INTER_AREA)
+
     def compute_sharpness(self, img_path: str) -> float:
         """拉普拉斯方差 → 0-100。方差越大越清晰。
 
+        先将图片长边归一化到 SHARPNESS_NORMALIZE_SIZE（默认 1024），
+        再计算拉普拉斯方差，消除分辨率差异对评分的影响。
         映射：variance 0 ~ SHARPNESS_VARIANCE_CEIL 线性映射到 0 ~ 100，
         超过 CEIL 封顶 100。
         """
         gray = load_image_grayscale(img_path)
+        gray = self._normalize_size(gray)
         variance = cv2.Laplacian(gray, cv2.CV_64F).var()
         score = min(variance / SHARPNESS_VARIANCE_CEIL * 100.0, 100.0)
         return float(round(score, 2))
 
     def compute_exposure(self, img_path: str) -> float:
-        """直方图分布 → 0-100。
+        """直方图分布 + 均值偏差 → 0-100。
 
-        理想分布集中在中间灰度区。极端暗（<EXPOSURE_DARK_THRESHOLD）与
-        极端亮（>EXPOSURE_BRIGHT_THRESHOLD）的像素占比越低，分越高。
+        两部分综合：
+        1. 中间灰度像素占比（极端暗/亮越少分越高），权重 0.6
+        2. 均值偏离 127.5 的程度（越接近中间灰度分越高），权重 0.4
+
+        比单纯中间灰度占比更能区分欠曝/过曝。
         """
         gray = load_image_grayscale(img_path)
         hist = cv2.calcHist([gray], [0], None, [256], [0, 256]).flatten()
@@ -60,10 +78,17 @@ class CVEngine:
         if total == 0:
             return 0.0
         hist = hist / total
+        # 边界语义统一为"不含阈值本身"：dark 区间 [0, DARK)，bright 区间 (BRIGHT, 255]
+        # 即 DARK=30 表示 0-29 为暗，BRIGHT=225 表示 226-255 为亮
         over_dark = hist[:EXPOSURE_DARK_THRESHOLD].sum()
-        over_bright = hist[EXPOSURE_BRIGHT_THRESHOLD:].sum()
+        over_bright = hist[EXPOSURE_BRIGHT_THRESHOLD + 1:].sum()
         mid_ratio = 1.0 - over_dark - over_bright
-        score = max(0.0, mid_ratio * 100.0)
+
+        mean_val = float(gray.mean())
+        mean_deviation = abs(mean_val - 127.5) / 127.5
+        mean_score = max(0.0, 1.0 - mean_deviation)
+
+        score = (mid_ratio * 0.6 + mean_score * 0.4) * 100.0
         return float(round(score, 2))
 
     def compute_composition(self, img_path: str) -> float:

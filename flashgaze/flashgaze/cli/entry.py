@@ -16,6 +16,7 @@ from flashgaze.core.cv_engine import CVEngine
 from flashgaze.core.exporter import Exporter
 from flashgaze.core.hybrid_scorer import HybridScorer
 from flashgaze.core.vlm_client import VLMClient
+from flashgaze.defaults import DEFAULT_CSV_OUTPUT
 from flashgaze.models.schemas import ExitCode
 from flashgaze.utils.image_io import iter_images
 from flashgaze.utils.logging import get_logger, set_verbose
@@ -58,9 +59,13 @@ def main(argv: list[str] | None = None) -> int:
             max_adjustment=config.vlm_max_adjustment,
         )
 
-    # 评分（复用已缓存的图片列表）
+    # 评分（复用已缓存的图片列表，verbose 时输出进度到 stderr）
     scorer = HybridScorer(cv_engine, vlm_client, config)
-    scored = scorer.score_paths(images)
+
+    def _progress(done: int, total: int) -> None:
+        logger.info("进度 %d/%d", done, total)
+
+    scored = scorer.score_paths(images, progress_callback=_progress)
     if not scored:
         logger.error("评分结果为空")
         return ExitCode.NO_IMAGES
@@ -82,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
         _emit_json(exporter, scored, elapsed_ms, config)
 
     if config.output_csv:
-        csv_path = config.csv_output_path or "flashgaze_result.csv"
+        csv_path = config.csv_output_path or DEFAULT_CSV_OUTPUT
         exporter.write_manifest(scored, "csv", csv_path)
 
     logger.info("完成: %d 张图，耗时 %d ms", len(scored), elapsed_ms)

@@ -154,6 +154,28 @@ def test_weights_from_config_file(tmp_path: Path):
     assert cfg.weights == {"sharpness": 0.7, "exposure": 0.3}
 
 
+def test_weights_cli_with_composition():
+    """--weights 含 composition 时三键归一化（F-05）。"""
+    cfg = _parse([
+        "./photos",
+        "--weights", '{"sharpness": 0.5, "exposure": 0.3, "composition": 0.2}',
+    ])
+    assert cfg.weights["sharpness"] == 0.5
+    assert cfg.weights["exposure"] == 0.3
+    assert cfg.weights["composition"] == 0.2
+
+
+def test_weights_cli_composition_normalized():
+    """--weights 非归一化输入时正确归一化（F-05）。"""
+    cfg = _parse([
+        "./photos",
+        "--weights", '{"sharpness": 3, "exposure": 1, "composition": 1}',
+    ])
+    assert cfg.weights["sharpness"] == 0.6  # 3/5
+    assert cfg.weights["exposure"] == 0.2   # 1/5
+    assert cfg.weights["composition"] == 0.2  # 1/5
+
+
 # ---------- 参数错误 ----------
 
 def test_missing_directory_returns_param_error(capsys):

@@ -106,6 +106,43 @@ def test_export_skips_missing_source(tmp_path: Path):
     assert count == 0
 
 
+def test_export_conflict_appends_suffix(photo_dir: Path, tmp_path: Path):
+    """同名文件冲突时自动追加序号后缀（C-14）。"""
+    sharp_path = str(photo_dir / "sharp.jpg")
+    # 两个 selected 图片都叫 sharp.jpg，目标目录已有一个 sharp.jpg
+    scored = [
+        _score("sharp.jpg", sharp_path, 90.0, selected=True),
+        _score("sharp.jpg", sharp_path, 85.0, selected=True),
+    ]
+    dest = tmp_path / "out"
+    dest.mkdir()
+    (dest / "sharp.jpg").write_bytes(b"existing")  # 预占 sharp.jpg
+    exporter = Exporter(_config(export=True))
+    count = exporter.export_images(scored, str(dest))
+    assert count == 2
+    # 原文件保留，新增 sharp_1.jpg 和 sharp_2.jpg
+    assert (dest / "sharp.jpg").exists()
+    assert (dest / "sharp_1.jpg").exists()
+    assert (dest / "sharp_2.jpg").exists()
+
+
+def test_export_many_conflicts_uses_set_lookup(photo_dir: Path, tmp_path: Path):
+    """大量同名冲突时集合查找 O(1)，不退化（C-14 性能验证）。"""
+    sharp_path = str(photo_dir / "sharp.jpg")
+    # 50 个同名 selected 图片
+    scored = [
+        _score("sharp.jpg", sharp_path, 90.0 - i, selected=True)
+        for i in range(50)
+    ]
+    dest = tmp_path / "bulk"
+    exporter = Exporter(_config(export=True))
+    count = exporter.export_images(scored, str(dest))
+    assert count == 50
+    # sharp.jpg + sharp_1.jpg ~ sharp_49.jpg
+    assert (dest / "sharp.jpg").exists()
+    assert (dest / "sharp_49.jpg").exists()
+
+
 # ---------- write_manifest JSON ----------
 
 def test_write_json_manifest(tmp_path: Path):
