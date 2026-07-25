@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/30011187/README.md)
 <div align="center">
 
 # FlashGaze
@@ -9,7 +8,7 @@ Hybrid CV + VLM engine for scoring and filtering photos on your machine, designe
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-88%20passed-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-134%20passed-brightgreen.svg)](#testing)
 [![Version](https://img.shields.io/badge/version-0.1.0-orange.svg)](#)
 
 **[English](#english) · [中文](#中文)**
@@ -157,7 +156,7 @@ flashgaze ./photos --threshold 75 --json --csv
 | `--top N` | Select top N images by score (default 30) |
 | `--threshold SCORE` | Score threshold, overrides `--top` |
 | `--export` | Copy selected images to export directory |
-| `--export-dir PATH` | Export destination (default `./精选`) |
+| `--export-dir PATH` | Export destination (default `./flashgaze_selected`) |
 | `--move` | Move instead of copy (use with `--export`) |
 | `--json` | Output JSON report to stdout |
 | `--csv` | Output CSV report |
@@ -165,6 +164,7 @@ flashgaze ./photos --threshold 75 --json --csv
 | `--csv-output PATH` | Write CSV report to file (default `flashgaze_result.csv`) |
 | `--no-vlm` | Disable VLM, CV-only mode (zero API cost) |
 | `--enable-composition` | Enable rule-of-thirds scoring *(experimental)* |
+| `--weights JSON` | 评分权重 JSON（如 '{"sharpness":0.7,"exposure":0.3}'），composition 可选 |
 | `--workers N` | Concurrent threads (default 4) |
 | `--config-file PATH` | Path to JSON config file |
 | `--verbose` | Verbose logging to stderr |
@@ -257,7 +257,7 @@ Priority order: **CLI args** > **environment variables** > **config file** > **d
 | `FLASHGAZE_MAX_RETRIES` | VLM retry count (timeout/connection only) | `3` |
 | `FLASHGAZE_VLM_MAX_ADJUSTMENT` | VLM adjustment cap | `10.0` |
 
-See `config.example.json` for the file-based config format. The `weights` field is only configurable via config file.
+See `config.example.json` for the file-based config format. Weights can also be set via --weights CLI arg or FLASHGAZE_WEIGHTS env var (JSON format).
 
 </details>
 
@@ -282,7 +282,7 @@ pip install -r requirements-dev.txt
 pytest -v
 ```
 
-88 tests covering CV engine, VLM client, hybrid scorer, exporter, CLI parser, end-to-end flows, reproducibility, and config layers.
+134 tests covering CV engine, VLM client, hybrid scorer, exporter, CLI parser, end-to-end flows, reproducibility, and config layers.
 
 ## Tech Stack
 
@@ -416,7 +416,7 @@ flashgaze ./photos --threshold 75 --json --csv
 | `--top N` | 选取前 N 张高分图（默认 30） |
 | `--threshold SCORE` | 分数阈值（替代 `--top`） |
 | `--export` | 复制高分图至导出目录 |
-| `--export-dir PATH` | 导出目标目录（默认 `./精选`） |
+| `--export-dir PATH` | 导出目标目录（默认 `./flashgaze_selected`） |
 | `--move` | 移动而非复制（需配合 `--export`） |
 | `--json` | 输出 JSON 清单到 stdout |
 | `--csv` | 输出 CSV 清单 |
@@ -424,6 +424,7 @@ flashgaze ./photos --threshold 75 --json --csv
 | `--csv-output PATH` | CSV 清单输出路径（默认 `flashgaze_result.csv`） |
 | `--no-vlm` | 禁用 VLM，仅用 CV（零 API 成本） |
 | `--enable-composition` | 启用构图评分 *（实验性）* |
+| `--weights JSON` | 评分权重 JSON（如 '{"sharpness":0.7,"exposure":0.3}'），composition 可选 |
 | `--workers N` | 并发线程数（默认 4） |
 | `--config-file PATH` | JSON 配置文件路径 |
 | `--verbose` | 详细日志（stderr） |
@@ -516,7 +517,7 @@ if result.returncode == 0:
 | `FLASHGAZE_MAX_RETRIES` | VLM 重试次数（仅超时/连接错误） | `3` |
 | `FLASHGAZE_VLM_MAX_ADJUSTMENT` | VLM 补偿上限 | `10.0` |
 
-文件配置格式见 `config.example.json`。`weights` 字段仅支持配置文件设置。
+文件配置格式见 `config.example.json`。weights 也可通过 --weights CLI 参数或 FLASHGAZE_WEIGHTS 环境变量设置（JSON 格式）。
 
 </details>
 
@@ -541,7 +542,7 @@ pip install -r requirements-dev.txt
 pytest -v
 ```
 
-88 项测试，覆盖 CV 引擎、VLM 客户端、混合评分器、导出器、CLI 解析器、端到端流程、可复现性和配置层。
+134 项测试，覆盖 CV 引擎、VLM 客户端、混合评分器、导出器、CLI 解析器、端到端流程、可复现性和配置层。
 
 ## 技术栈
 

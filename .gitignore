@@ -1,34 +1,29 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Type checkers / linters / test caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Build artifacts
 *.egg-info/
-*.egg-link/
+*.egg
 build/
 dist/
-*.egg
 
 # Virtual environments
-venv/
 .venv/
+venv/
 env/
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.tox/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Environment
-.env
-.env.local
-
-# OS
+# OS / editor
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/

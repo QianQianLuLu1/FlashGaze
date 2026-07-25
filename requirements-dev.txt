@@ -1,0 +1,9 @@
+# Testing
+pytest>=7.4.0
+pytest-cov>=4.1.0
+
+# Lint & format
+ruff>=0.5.0
+
+# Static type check
+mypy>=1.10.0
