@@ -7,8 +7,8 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Iterator
 from pathlib import Path
+from typing import Iterator
 
 import cv2
 import numpy as np
@@ -30,7 +30,7 @@ def _ensure_heif_support() -> None:
 
     register_heif_opener() 是进程级全局注册，会影响整个 Python 进程的 Pillow
     行为。作为库被其他代码导入时，应在实际需要时才注册，避免副作用。
-    pillow-heif 未安装时静默跳过，由 _decode_with_pillow 抛出 ImageReadError。
+    pillow-heif 未安装时静默跳过，由 _decode_bgr 抛出 ImageReadError。
     """
     global _heif_registered
     if _heif_registered:
@@ -41,7 +41,7 @@ def _ensure_heif_support() -> None:
         register_heif_opener()
         _heif_registered = True
     except ImportError:
-        # pillow-heif 未安装，HEIC 解码会失败并由 _decode_with_pillow 报错
+        # pillow-heif 未安装，HEIC 解码会失败并由 _decode_bgr 报错
         pass
 
 
@@ -79,34 +79,64 @@ def iter_images(
             yield str(p.resolve())
 
 
-def _decode_with_pillow(path: str) -> np.ndarray:
-    """Pillow 兜底解码（OpenCV 对 WebP / 损坏 JPEG / HEIC 可能失败）。"""
+def _decode_bgr(path: str) -> np.ndarray:
+    """统一用 Pillow 解码为 BGR（原生支持 Unicode 路径），消除双解码器漂移。
+
+    cv2.imread 在 Windows 下遇到中文/全角括号等 Unicode 路径会返回 None，
+    回退到 Pillow 会让两条解码路径的像素值差 ±1(uint8)，破坏 --no-vlm 的
+    逐位可复现性。因此所有解码一律走 Pillow，cv2 仅用于确定的色彩转换/缩放。
+    """
     _maybe_register_heif(path)
     try:
         with Image.open(path) as img:
             img = img.convert("RGB")
             return np.array(img)[:, :, ::-1].copy()  # RGB -> BGR
     except (UnidentifiedImageError, OSError) as e:
-        raise ImageReadError(f"Pillow 解码失败: {e}") from e
+        raise ImageReadError(f"图片解码失败: {e}") from e
 
 
-def load_image_color(path: str) -> np.ndarray:
-    """读取彩色图（BGR，OpenCV 约定）。失败抛 ImageReadError。"""
-    _maybe_register_heif(path)
-    img = cv2.imread(path, cv2.IMREAD_COLOR)
-    if img is None:
-        img = _decode_with_pillow(path)
-    return img
+def downscale_if_needed(
+    img: np.ndarray, max_long_side: int | None
+) -> np.ndarray:
+    """长边超过 max_long_side 时按比例等比缩小，返回新数组（原数组不动）。
+
+    仅用于内部评分降采样，绝不修改原图片文件。max_long_side 为 None 或
+    长边未超阈值时原样返回。INTER_AREA 是 OpenCV 推荐的下采样插值，
+    能有效抑制锯齿，保留原图高频信息的相对强弱关系。
+    """
+    if max_long_side is None:
+        return img
+    h, w = img.shape[:2]
+    long_side = max(h, w)
+    if long_side <= max_long_side:
+        return img
+    scale = max_long_side / long_side
+    new_size = (int(w * scale), int(h * scale))
+    return cv2.resize(img, new_size, interpolation=cv2.INTER_AREA)
 
 
-def load_image_grayscale(path: str) -> np.ndarray:
-    """读取灰度图。失败抛 ImageReadError。"""
-    _maybe_register_heif(path)
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        color = _decode_with_pillow(path)
-        img = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
-    return img
+def load_image_color(
+    path: str, max_long_side: int | None = None
+) -> np.ndarray:
+    """读取彩色图（BGR，OpenCV 约定）。失败抛 ImageReadError。
+
+    max_long_side 设定时，长边超过该值的图在内存中按比例缩小（不修改原文件），
+    用于降低大图评分时的内存峰值。默认 None 表示按原分辨率加载。
+    """
+    img = _decode_bgr(path)
+    return downscale_if_needed(img, max_long_side)
+
+
+def load_image_grayscale(
+    path: str, max_long_side: int | None = None
+) -> np.ndarray:
+    """读取灰度图。失败抛 ImageReadError。
+
+    max_long_side 设定时，长边超过该值的图在内存中按比例缩小（不修改原文件）。
+    """
+    color = _decode_bgr(path)
+    img = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)
+    return downscale_if_needed(img, max_long_side)
 
 
 def encode_image_b64(path: str, max_size: int = 1024) -> str:

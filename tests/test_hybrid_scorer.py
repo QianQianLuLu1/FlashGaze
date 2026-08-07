@@ -137,6 +137,52 @@ def test_vlm_failure_falls_back_to_cv_only(photo_dir: str):
     assert all(r.vlm_adjustment == 0.0 for r in valid)
 
 
+# ---------- VLM 可解释性字段透传（M4）----------
+
+def test_vlm_success_propagates_reason_and_provider(photo_dir: str):
+    """VLM 成功时 ImageScore.vlm_reason / vlm_provider 被填充。"""
+    mock_vlm = MagicMock()
+    mock_vlm.judge.return_value = VLMResult(
+        adjustment=5.0, reason="背景虚化", ok=True,
+        provider="qwen", scene="portrait",
+    )
+    config = _config(directory=photo_dir, no_vlm=False)
+    scorer = HybridScorer(CVEngine(), mock_vlm, config)
+    results = scorer.score_batch(photo_dir)
+    valid = [r for r in results if r.error is None]
+    assert all(r.vlm_reason == "背景虚化" for r in valid)
+    assert all(r.vlm_provider == "qwen" for r in valid)
+    assert all(r.vlm_adjustment == 5.0 for r in valid)
+
+
+def test_vlm_failure_empty_reason_and_provider(photo_dir: str):
+    """VLM 失败时 ImageScore.vlm_reason / vlm_provider 为空串。"""
+    mock_vlm = MagicMock()
+    mock_vlm.judge.return_value = VLMResult(
+        adjustment=0.0, reason="失败", ok=False, error="timeout",
+        provider="qwen", scene="auto",
+    )
+    config = _config(directory=photo_dir, no_vlm=False)
+    scorer = HybridScorer(CVEngine(), mock_vlm, config)
+    results = scorer.score_batch(photo_dir)
+    valid = [r for r in results if r.error is None]
+    # 失败时 vlm_adj 归零，reason/provider 为空串（向后兼容）
+    assert all(r.vlm_adjustment == 0.0 for r in valid)
+    assert all(r.vlm_reason == "" for r in valid)
+    assert all(r.vlm_provider == "" for r in valid)
+
+
+def test_no_vlm_mode_empty_reason_and_provider(photo_dir: str):
+    """--no-vlm 模式下 vlm_reason / vlm_provider 为空串。"""
+    config = _config(directory=photo_dir, no_vlm=True)
+    scorer = HybridScorer(CVEngine(), None, config)
+    results = scorer.score_batch(photo_dir)
+    valid = [r for r in results if r.error is None]
+    assert all(r.vlm_reason == "" for r in valid)
+    assert all(r.vlm_provider == "" for r in valid)
+    assert all(r.vlm_adjustment == 0.0 for r in valid)
+
+
 def test_score_clamped_to_0_100(photo_dir: str):
     """VLM 补偿导致超范围时 clamp 到 0-100。"""
     mock_vlm = MagicMock()

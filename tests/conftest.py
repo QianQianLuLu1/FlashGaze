@@ -5,6 +5,9 @@
 - blurry.jpg：强高斯模糊（低方差）
 - dark.jpg：全黑图（D3 用，曝光度低分）
 - corrupted.jpg：纯文本伪装成 jpg（D8 异常用例）
+- colorful.jpg：多色块图（高饱和度多色相，M3 色彩丰富度用）
+- gray.jpg：纯灰图（饱和度=0，M3 色彩丰富度对照用）
+- duplicate_a.jpg / duplicate_b.jpg：完全相同的两张图（M5 去重用）
 """
 
 from __future__ import annotations
@@ -49,6 +52,38 @@ def _ensure_fixtures() -> None:
         # 伪装成 jpg 的纯文本，解码必失败
         corrupted.write_text("this is not a real image", encoding="utf-8")
 
+    colorful = FIXTURES_DIR / "colorful.jpg"
+    if not colorful.exists():
+        # 多色块图：6 个色块，高饱和度多色相，色彩丰富度高
+        # BGR 格式（OpenCV 默认）
+        blocks = [
+            ((0, 0, 255), (0, 0)),       # 红
+            ((0, 255, 0), (256, 0)),     # 绿
+            ((255, 0, 0), (0, 256)),     # 蓝
+            ((0, 255, 255), (256, 256)), # 黄
+            ((255, 0, 255), (128, 128)), # 品红
+            ((255, 255, 0), (200, 50)),  # 青
+        ]
+        img = np.zeros((512, 512, 3), dtype=np.uint8)
+        for color, (x, y) in blocks:
+            img[y:y+256, x:x+256] = color
+        cv2.imwrite(str(colorful), img)
+
+    gray = FIXTURES_DIR / "gray.jpg"
+    if not gray.exists():
+        # 纯灰图：饱和度=0，色彩丰富度应为 0
+        img = np.full((512, 512, 3), 128, dtype=np.uint8)
+        cv2.imwrite(str(gray), img)
+
+    # 完全相同的两张图，用于 PHash 去重测试
+    dup_a = FIXTURES_DIR / "duplicate_a.jpg"
+    dup_b = FIXTURES_DIR / "duplicate_b.jpg"
+    if not dup_a.exists() or not dup_b.exists():
+        rng = np.random.default_rng(RNG_SEED + 1)
+        noise = rng.integers(0, 256, size=(256, 256), dtype=np.uint8)
+        cv2.imwrite(str(dup_a), noise)
+        cv2.imwrite(str(dup_b), noise.copy())  # 完全一致的另一份
+
 
 @pytest.fixture(scope="session", autouse=True)
 def fixtures_dir() -> Path:
@@ -77,18 +112,21 @@ def corrupted_img(fixtures_dir: Path) -> str:
     return str(fixtures_dir / "corrupted.jpg")
 
 
-# ── --skip-slow 选项（性能基准测试用）──────────────────
+@pytest.fixture
+def colorful_img(fixtures_dir: Path) -> str:
+    return str(fixtures_dir / "colorful.jpg")
 
 
-def pytest_addoption(parser):
-    """注册 --skip-slow 命令行选项，跳过标记为 slow 的性能测试。"""
-    parser.addoption("--skip-slow", action="store_true", help="skip slow tests")
+@pytest.fixture
+def gray_img(fixtures_dir: Path) -> str:
+    return str(fixtures_dir / "gray.jpg")
 
 
-def pytest_collection_modifyitems(config, items):
-    """启用 --skip-slow 时，给所有 slow 标记的测试加上 skip 标记。"""
-    if config.getoption("--skip-slow"):
-        skip_slow = pytest.mark.skip(reason="--skip-slow")
-        for item in items:
-            if "slow" in item.keywords:
-                item.add_marker(skip_slow)
+@pytest.fixture
+def duplicate_a_img(fixtures_dir: Path) -> str:
+    return str(fixtures_dir / "duplicate_a.jpg")
+
+
+@pytest.fixture
+def duplicate_b_img(fixtures_dir: Path) -> str:
+    return str(fixtures_dir / "duplicate_b.jpg")

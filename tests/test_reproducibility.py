@@ -54,6 +54,36 @@ def test_cv_evaluate_10_runs_identical(sharp_img: str):
         assert r.error == base.error
 
 
+# ---------- CV 增强维度可复现（M10）----------
+
+
+def test_cv_color_10_runs_identical(colorful_img: str):
+    """色彩丰富度 10 次调用结果完全一致（OpenCV 内置，必可用）。"""
+    engine = CVEngine(enable_color=True)
+    results = [engine.evaluate(colorful_img) for _ in range(10)]
+    base = results[0]
+    for r in results[1:]:
+        assert r.color == base.color, f"色彩丰富度不稳定: {[r.color for r in results]}"
+    # 顺便验证其他维度也保持一致
+    for r in results[1:]:
+        assert r.sharpness == base.sharpness
+        assert r.exposure == base.exposure
+
+
+def test_hybrid_scorer_with_color_10_runs_identical(sharp_img: str, blurry_img: str):
+    """启用 color 维度后，HybridScorer no_vlm 模式下 10 次评分完全一致。"""
+    config = Config(
+        directory=".", no_vlm=True, top=2, enable_color=True,
+    )
+    scorer = HybridScorer(CVEngine(enable_color=True), None, config)
+    runs = [
+        scorer.score_batch(str(Path(sharp_img).parent)) for _ in range(10)
+    ]
+    base = [(r.file, r.score, r.color) for r in runs[0]]
+    for run in runs[1:]:
+        assert [(r.file, r.score, r.color) for r in run] == base
+
+
 # ---------- HybridScorer 可复现 ----------
 
 def test_hybrid_scorer_10_runs_identical_no_vlm(sharp_img: str, blurry_img: str):

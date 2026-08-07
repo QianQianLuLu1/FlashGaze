@@ -151,30 +151,106 @@ def test_merge_env_weights_composition_normalized(monkeypatch):
     assert w["composition"] == 0.2  # 1/5
 
 
-# ---------- VLM 语言环境变量 ----------
+# ---------- VLM 扩展：provider / scene 环境变量（M3）----------
 
-def test_merge_env_reads_vlm_lang(monkeypatch):
-    """FLASHGAZE_VLM_LANG=en 被正确读取。"""
-    monkeypatch.setenv("FLASHGAZE_VLM_LANG", "en")
+def test_merge_env_reads_vlm_provider(monkeypatch):
+    """FLASHGAZE_VLM_PROVIDER 被正确读取。"""
+    monkeypatch.setenv("FLASHGAZE_VLM_PROVIDER", "openai")
     cfg = merge_env()
-    assert cfg.get("vlm_lang") == "en"
+    assert cfg["vlm_provider"] == "openai"
 
 
-def test_merge_env_reads_vlm_lang_case_insensitive(monkeypatch):
-    """FLASHGAZE_VLM_LANG 大小写不敏感（EN → en）。"""
-    monkeypatch.setenv("FLASHGAZE_VLM_LANG", "EN")
+def test_merge_env_reads_scene(monkeypatch):
+    """FLASHGAZE_SCENE 被正确读取。"""
+    monkeypatch.setenv("FLASHGAZE_SCENE", "portrait")
     cfg = merge_env()
-    assert cfg.get("vlm_lang") == "en"
+    assert cfg["scene"] == "portrait"
 
 
-def test_merge_env_ignores_invalid_vlm_lang(monkeypatch):
-    """非法 FLASHGAZE_VLM_LANG 被静默忽略，不写入 cfg。"""
-    monkeypatch.setenv("FLASHGAZE_VLM_LANG", "fr")
+def test_merge_env_no_vlm_vars_when_unset(monkeypatch):
+    """未设置 VLM 扩展变量时不出现在返回 dict 中。"""
+    monkeypatch.delenv("FLASHGAZE_VLM_PROVIDER", raising=False)
+    monkeypatch.delenv("FLASHGAZE_SCENE", raising=False)
     cfg = merge_env()
-    assert "vlm_lang" not in cfg  # 非法值被静默忽略
+    assert "vlm_provider" not in cfg
+    assert "scene" not in cfg
 
 
-def test_default_config_dict_includes_vlm_lang():
-    """default_config_dict 包含 vlm_lang 默认值。"""
+def test_default_config_dict_includes_vlm_provider_and_scene():
+    """默认配置 dict 包含 vlm_provider / scene 默认值。"""
     cfg = default_config_dict()
-    assert cfg["vlm_lang"] == "zh"
+    assert cfg["vlm_provider"] == "qwen"
+    assert cfg["scene"] == "auto"
+
+
+# ---------- build_config 校验（M3）----------
+
+def test_build_config_invalid_provider_falls_back_to_default(monkeypatch):
+    """非法 provider 回退到 qwen 默认值。"""
+    from flashgaze.utils.config import build_config
+    monkeypatch.delenv("FLASHGAZE_VLM_PROVIDER", raising=False)
+    cfg = build_config(".", vlm_provider="invalid_provider")
+    assert cfg.vlm_provider == "qwen"
+
+
+def test_build_config_invalid_scene_falls_back_to_default(monkeypatch):
+    """非法 scene 回退到 auto 默认值。"""
+    from flashgaze.utils.config import build_config
+    monkeypatch.delenv("FLASHGAZE_SCENE", raising=False)
+    cfg = build_config(".", scene="invalid_scene")
+    assert cfg.scene == "auto"
+
+
+def test_build_config_valid_provider_accepted(monkeypatch):
+    """合法 provider 被接受。"""
+    from flashgaze.utils.config import build_config
+    monkeypatch.delenv("FLASHGAZE_VLM_PROVIDER", raising=False)
+    cfg = build_config(".", vlm_provider="anthropic")
+    assert cfg.vlm_provider == "anthropic"
+
+
+def test_build_config_valid_scene_accepted(monkeypatch):
+    """合法 scene 被接受。"""
+    from flashgaze.utils.config import build_config
+    monkeypatch.delenv("FLASHGAZE_SCENE", raising=False)
+    cfg = build_config(".", scene="landscape")
+    assert cfg.scene == "landscape"
+
+
+def test_build_config_defaults_provider_and_scene(monkeypatch):
+    """无任何覆盖时使用默认值 qwen / auto。"""
+    from flashgaze.utils.config import build_config
+    monkeypatch.delenv("FLASHGAZE_VLM_PROVIDER", raising=False)
+    monkeypatch.delenv("FLASHGAZE_SCENE", raising=False)
+    cfg = build_config(".")
+    assert cfg.vlm_provider == "qwen"
+    assert cfg.scene == "auto"
+
+
+def test_build_config_legacy_file_without_new_fields(monkeypatch, tmp_path: Path):
+    """旧配置文件（无 vlm_provider/scene 字段）可正常加载，使用默认值。"""
+    from flashgaze.utils.config import build_config, load_config_file
+    monkeypatch.delenv("FLASHGAZE_VLM_PROVIDER", raising=False)
+    monkeypatch.delenv("FLASHGAZE_SCENE", raising=False)
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(
+        json.dumps({"api_key": "k", "model": "m"}),
+        encoding="utf-8",
+    )
+    cfg = build_config(".", file_cfg=load_config_file(legacy))
+    assert cfg.vlm_provider == "qwen"
+    assert cfg.scene == "auto"
+    assert cfg.api_key == "k"
+
+
+def test_build_config_env_overrides_file_for_vlm_provider(monkeypatch, tmp_path: Path):
+    """环境变量 vlm_provider 优先于配置文件。"""
+    from flashgaze.utils.config import build_config, load_config_file
+    cfg_file = tmp_path / "cfg.json"
+    cfg_file.write_text(
+        json.dumps({"vlm_provider": "openai"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("FLASHGAZE_VLM_PROVIDER", "anthropic")
+    cfg = build_config(".", file_cfg=load_config_file(cfg_file))
+    assert cfg.vlm_provider == "anthropic"

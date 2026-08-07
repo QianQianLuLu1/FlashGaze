@@ -55,6 +55,18 @@ def test_parse_no_vlm():
     assert cfg.no_vlm is True
 
 
+def test_parse_no_downscale_default_false():
+    """默认 no_downscale=False，即启用降采样。"""
+    cfg = _parse(["./photos"])
+    assert cfg.no_downscale is False
+
+
+def test_parse_no_downscale_flag():
+    """--no-downscale 被正确解析为 True。"""
+    cfg = _parse(["./photos", "--no-downscale"])
+    assert cfg.no_downscale is True
+
+
 def test_parse_enable_composition():
     cfg = _parse(["./photos", "--enable-composition"])
     assert cfg.enable_composition is True
@@ -68,6 +80,102 @@ def test_parse_output_path():
 def test_parse_workers():
     cfg = _parse(["./photos", "--workers", "8"])
     assert cfg.workers == 8
+
+
+# ---------- VLM 扩展：--vlm-provider / --scene 参数（M3/M7）----------
+
+def test_parse_vlm_provider_default_qwen(monkeypatch):
+    """不传 --vlm-provider 时默认 qwen。"""
+    monkeypatch.delenv("FLASHGAZE_VLM_PROVIDER", raising=False)
+    cfg = _parse(["./photos"])
+    assert cfg.vlm_provider == "qwen"
+
+
+def test_parse_vlm_provider_openai():
+    """--vlm-provider openai 被正确解析。"""
+    cfg = _parse(["./photos", "--vlm-provider", "openai"])
+    assert cfg.vlm_provider == "openai"
+
+
+def test_parse_vlm_provider_anthropic():
+    """--vlm-provider anthropic 被正确解析。"""
+    cfg = _parse(["./photos", "--vlm-provider", "anthropic"])
+    assert cfg.vlm_provider == "anthropic"
+
+
+def test_parse_vlm_provider_ollama():
+    """--vlm-provider ollama 被正确解析。"""
+    cfg = _parse(["./photos", "--vlm-provider", "ollama"])
+    assert cfg.vlm_provider == "ollama"
+
+
+def test_parse_vlm_provider_invalid_choice_rejected(capsys):
+    """--vlm-provider 不在 choices 中时 argparse 报错（exit code=2）。"""
+    with pytest.raises(SystemExit) as exc_info:
+        _parse(["./photos", "--vlm-provider", "claude"])
+    assert exc_info.value.code == 2
+
+
+def test_parse_scene_default_auto(monkeypatch):
+    """不传 --scene 时默认 auto。"""
+    monkeypatch.delenv("FLASHGAZE_SCENE", raising=False)
+    cfg = _parse(["./photos"])
+    assert cfg.scene == "auto"
+
+
+def test_parse_scene_portrait():
+    """--scene portrait 被正确解析。"""
+    cfg = _parse(["./photos", "--scene", "portrait"])
+    assert cfg.scene == "portrait"
+
+
+def test_parse_scene_landscape():
+    """--scene landscape 被正确解析。"""
+    cfg = _parse(["./photos", "--scene", "landscape"])
+    assert cfg.scene == "landscape"
+
+
+def test_parse_scene_still_life():
+    """--scene still_life 被正确解析。"""
+    cfg = _parse(["./photos", "--scene", "still_life"])
+    assert cfg.scene == "still_life"
+
+
+def test_parse_scene_invalid_choice_rejected(capsys):
+    """--scene 不在 choices 中时 argparse 报错（exit code=2）。"""
+    with pytest.raises(SystemExit) as exc_info:
+        _parse(["./photos", "--scene", "macro"])
+    assert exc_info.value.code == 2
+
+
+def test_parse_vlm_provider_and_scene_combined():
+    """同时传 --vlm-provider 与 --scene。"""
+    cfg = _parse([
+        "./photos", "--vlm-provider", "openai", "--scene", "portrait",
+    ])
+    assert cfg.vlm_provider == "openai"
+    assert cfg.scene == "portrait"
+
+
+def test_priority_cli_vlm_provider_over_env(monkeypatch):
+    """CLI --vlm-provider 优先于环境变量。"""
+    monkeypatch.setenv("FLASHGAZE_VLM_PROVIDER", "anthropic")
+    cfg = _parse(["./photos", "--vlm-provider", "openai"])
+    assert cfg.vlm_provider == "openai"
+
+
+def test_priority_env_vlm_provider_over_default(monkeypatch):
+    """环境变量 FLASHGAZE_VLM_PROVIDER 优先于默认值。"""
+    monkeypatch.setenv("FLASHGAZE_VLM_PROVIDER", "ollama")
+    cfg = _parse(["./photos"])
+    assert cfg.vlm_provider == "ollama"
+
+
+def test_priority_env_scene_over_default(monkeypatch):
+    """环境变量 FLASHGAZE_SCENE 优先于默认值。"""
+    monkeypatch.setenv("FLASHGAZE_SCENE", "landscape")
+    cfg = _parse(["./photos"])
+    assert cfg.scene == "landscape"
 
 
 # ---------- 配置优先级 ----------

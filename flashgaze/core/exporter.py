@@ -1,6 +1,6 @@
 """Exporter：高分图复制/移动 + 评分清单生成。
 
-支持 JSON / CSV 两种清单格式。导出目录默认 ./flashgaze_selected。
+支持 JSON / CSV 两种清单格式。导出目录默认 ./精选。
 同名文件冲突时自动追加序号后缀（如 IMG_001_1.jpg），不覆盖。
 """
 
@@ -12,7 +12,19 @@ import shutil
 from dataclasses import asdict
 from pathlib import Path
 
+from flashgaze.defaults import DEFAULT_EXPORT_DIR
 from flashgaze.models.schemas import Config, ImageScore
+from flashgaze.utils.logging import get_logger
+
+logger = get_logger()
+
+# 清单列定义单一来源：CSV（_write_csv）与 XlsxExporter 共用，避免两份列顺序漂移。
+MANIFEST_COLUMNS = (
+    "file", "path", "sharpness", "exposure", "composition",
+    "vlm_adjustment", "score", "selected", "error",
+    "noise", "color", "face_count", "face_sharpness",
+    "portrait_bonus", "deduped", "vlm_reason", "vlm_provider",
+)
 
 
 class Exporter:
@@ -24,18 +36,13 @@ class Exporter:
     def export_images(
         self,
         scored: list[ImageScore],
-        dest_dir: str | None = None,
+        dest_dir: str = DEFAULT_EXPORT_DIR,
     ) -> int:
         """复制/移动 selected 的图片到 dest_dir。返回处理数量。
 
         同名文件冲突时自动追加序号后缀（如 IMG_001_1.jpg），不覆盖。
         一次性读取目标目录已有文件名集合，冲突查找 O(1)，避免大量同名时 O(n²) 磁盘 IO。
-
-        dest_dir 为 None 时回落到 self.config.export_dir，使 CLI 不传参时
-        与 config.export_dir 保持一致；MCP 调用方显式传参则覆盖之。
         """
-        if dest_dir is None:
-            dest_dir = self.config.export_dir
         dest = Path(dest_dir)
         dest.mkdir(parents=True, exist_ok=True)
         # 一次性加载目标目录已有文件名（C-14：避免 _resolve_conflict 每次都 stat）
@@ -50,11 +57,15 @@ class Exporter:
             dst_name = self._resolve_conflict_fast(s.file, existing)
             existing.add(dst_name)  # 登记新文件，避免本轮内同名再次冲突
             dst = dest / dst_name
-            if self.config.move:
-                shutil.move(str(src), str(dst))
-            else:
-                shutil.copy2(str(src), str(dst))
-            moved += 1
+            try:
+                if self.config.move:
+                    shutil.move(str(src), str(dst))
+                else:
+                    shutil.copy2(str(src), str(dst))
+                moved += 1
+            except OSError as e:
+                logger.warning("导出失败，跳过 %s: %s", s.file, e)
+                continue
         return moved
 
     @staticmethod
@@ -98,14 +109,11 @@ class Exporter:
         }
         if elapsed_ms is not None:
             summary["elapsed_ms"] = elapsed_ms
-        # CLI 与 MCP 输出格式统一为六字段 Schema（status/code/message/summary/images/details）
         return {
             "status": "success",
             "code": 0,
-            "message": None,
             "summary": summary,
             "images": [asdict(s) for s in scored],
-            "details": None,
         }
 
     def _write_json(self, scored: list[ImageScore], path: str) -> None:
@@ -117,19 +125,7 @@ class Exporter:
     def _write_csv(self, scored: list[ImageScore], path: str) -> None:
         with open(path, "w", newline="", encoding="utf-8-sig") as f:
             writer = csv.writer(f)
-            writer.writerow(
-                [
-                    "file",
-                    "path",
-                    "sharpness",
-                    "exposure",
-                    "composition",
-                    "vlm_adjustment",
-                    "score",
-                    "selected",
-                    "error",
-                ]
-            )
+            writer.writerow(list(MANIFEST_COLUMNS))
             for s in scored:
                 writer.writerow(
                     [
@@ -142,5 +138,13 @@ class Exporter:
                         s.score,
                         s.selected,
                         s.error if s.error is not None else "",
+                        s.noise if s.noise is not None else "",
+                        s.color if s.color is not None else "",
+                        s.face_count,
+                        s.face_sharpness if s.face_sharpness is not None else "",
+                        s.portrait_bonus,
+                        s.deduped,
+                        s.vlm_reason,
+                        s.vlm_provider,
                     ]
                 )

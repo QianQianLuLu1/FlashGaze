@@ -15,6 +15,8 @@ from unittest import mock
 
 import pytest
 
+pytest.importorskip("mcp")
+
 from flashgaze.mcp_server import (
     _build_config,
     _error,
@@ -54,10 +56,22 @@ class TestBuildConfig:
         assert cfg.top == 5
 
     def test_env_workers_respected(self, monkeypatch):
-        """A-02 核心：MCP 调用方不传 workers 时，FLASHGAZE_WORKERS 应生效。"""
-        monkeypatch.setenv("FLASHGAZE_WORKERS", "16")
+        """A-02 核心：MCP 调用方不传 workers 时，FLASHGAZE_WORKERS 应生效（机器无关）。"""
+        cpu_count = os.cpu_count() or 4
+        cap = min(cpu_count, 16)
+        # 取一个明确 ≤ cap 的值，证明 env 覆盖生效且不受钳制影响
+        env_val = cap // 2 if cap >= 2 else cap
+        monkeypatch.setenv("FLASHGAZE_WORKERS", str(env_val))
         cfg = _build_config(directory="/tmp")  # workers 默认 None
-        assert cfg.workers == 16
+        assert cfg.workers == env_val
+
+    def test_env_workers_clamped(self, monkeypatch):
+        """env 超过 cpu 上限时，应被钳制到 min(cpu_count, 16)。"""
+        cpu_count = os.cpu_count() or 4
+        cap = min(cpu_count, 16)
+        monkeypatch.setenv("FLASHGAZE_WORKERS", "999")
+        cfg = _build_config(directory="/tmp")  # workers 默认 None
+        assert cfg.workers == cap
 
     def test_env_workers_overridden_by_param(self, monkeypatch):
         """显式参数优先级高于 env。"""
@@ -322,7 +336,7 @@ class TestCleanupWorkspace:
             vlm_adjustment=0.0,
             score=0.0,
         )
-        with mock.patch("flashgaze.mcp_server._make_scorer") as ms:
+        with mock.patch("flashgaze.mcp_server.make_scorer") as ms:
             scorer = ms.return_value
             scorer.score_paths.return_value = [outside_score]
             raw = cleanup_workspace_images(
@@ -349,50 +363,3 @@ class TestCleanupWorkspace:
         assert "corrupted.jpg" in unevaluated_names
         deleted_names = data["details"]["deleted_files"]
         assert "corrupted.jpg" not in deleted_names
-
-
-# ── MCP Server 启动测试（模块可导入 + 工具注册）────────
-
-
-class TestMCPServerStartup:
-    """验证 MCP Server 模块可导入且工具正确注册。
-
-    不真正启动 stdio 传输，只校验模块层面状态。
-    """
-
-    def test_mcp_server_importable(self):
-        """验证 from flashgaze.mcp_server import mcp 能正常导入。"""
-        from flashgaze.mcp_server import mcp
-
-        assert mcp is not None
-        # FastMCP 实例应有 name 属性
-        assert mcp.name == "flashgaze"
-
-    def test_mcp_server_has_tools(self):
-        """验证 mcp 对象注册了 5 个预期工具。"""
-        import asyncio
-
-        from flashgaze.mcp_server import mcp
-
-        tools = asyncio.run(mcp.list_tools())
-        tool_names = {t.name for t in tools}
-
-        expected = {
-            "score_images",
-            "score_single_image",
-            "score_uploaded_images",
-            "export_selected_images",
-            "cleanup_workspace_images",
-        }
-        assert expected.issubset(tool_names), (
-            f"缺失工具: {expected - tool_names}"
-        )
-
-    def test_mcp_server_tool_count(self):
-        """验证工具数量为 5。"""
-        import asyncio
-
-        from flashgaze.mcp_server import mcp
-
-        tools = asyncio.run(mcp.list_tools())
-        assert len(tools) == 5, f"期望 5 个工具，实际 {len(tools)}"

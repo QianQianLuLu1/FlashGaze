@@ -15,17 +15,17 @@ Codex 等支持 MCP 的 AI Agent 直接调用。
 from __future__ import annotations
 
 import json
+import os
 import stat
 import time
 from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from flashgaze.core.cv_engine import CVEngine
 from flashgaze.core.exporter import Exporter
-from flashgaze.core.hybrid_scorer import HybridScorer
-from flashgaze.core.vlm_client import VLMClient
+from flashgaze.core.factory import make_scorer
 from flashgaze.defaults import SUPPORTED_EXTENSIONS
 from flashgaze.models.schemas import Config
 from flashgaze.utils.config import build_config
@@ -39,11 +39,18 @@ mcp = FastMCP("flashgaze")
 
 def _build_config(
     directory: str,
-    top: int | None = None,
-    threshold: float | None = None,
-    no_vlm: bool | None = None,
-    enable_composition: bool | None = None,
-    workers: int | None = None,
+    top: Optional[int] = None,
+    threshold: Optional[float] = None,
+    no_vlm: Optional[bool] = None,
+    enable_composition: Optional[bool] = None,
+    enable_noise: Optional[bool] = None,
+    enable_color: Optional[bool] = None,
+    enable_portrait: Optional[bool] = None,
+    dedup: Optional[bool] = None,
+    dedup_threshold: Optional[int] = None,
+    workers: Optional[int] = None,
+    vlm_provider: Optional[str] = None,
+    scene: Optional[str] = None,
 ) -> Config:
     """MCP 参数作为 overrides 传给 build_config。
 
@@ -58,22 +65,14 @@ def _build_config(
         threshold=threshold,
         no_vlm=no_vlm,
         enable_composition=enable_composition,
+        enable_noise=enable_noise,
+        enable_color=enable_color,
+        enable_portrait=enable_portrait,
+        dedup=dedup,
+        dedup_threshold=dedup_threshold,
         workers=workers,
-    )
-
-
-def _make_vlm_client(config: Config) -> VLMClient | None:
-    """根据 config 构建 VLMClient。缺 key 时返回 None。"""
-    if config.no_vlm or not config.api_key:
-        return None
-    return VLMClient(
-        api_key=config.api_key,
-        api_base=config.api_base,
-        model=config.model,
-        timeout_sec=config.timeout_sec,
-        max_retries=config.max_retries,
-        max_adjustment=config.vlm_max_adjustment,
-        vlm_lang=config.vlm_lang,
+        vlm_provider=vlm_provider,
+        scene=scene,
     )
 
 
@@ -124,13 +123,6 @@ def _validate_vlm(config: Config) -> str | None:
     return None
 
 
-def _make_scorer(config: Config) -> HybridScorer:
-    """根据 config 构建 HybridScorer（复用 CVEngine + VLMClient 装配逻辑）。"""
-    cv_engine = CVEngine(enable_composition=config.enable_composition)
-    vlm_client = _make_vlm_client(config)
-    return HybridScorer(cv_engine, vlm_client, config)
-
-
 def _is_within_directory(file_path: Path, root: Path) -> bool:
     """安全检查：file_path 是否严格在 root 目录内（防止路径穿越）。"""
     try:
@@ -162,16 +154,13 @@ def _build_report(
     extra: dict | None = None,
     details: dict | None = None,
 ) -> str:
-    """统一构造 JSON 报告字符串，复用 Exporter.build_report 静态方法。
-
-    build_report 已返回六字段 Schema（status/code/message/summary/images/details），
-    此处仅需合并 extra 到 summary，并覆盖 details（默认 None 时保持不变）。
-    """
+    """统一构造 JSON 报告字符串，复用 Exporter.build_report 静态方法并补齐六字段。"""
     report = Exporter.build_report(scored, elapsed_ms=elapsed_ms)
     if extra:
         report["summary"].update(extra)
-    if details is not None:
-        report["details"] = details
+    # 补齐六字段统一 Schema
+    report["message"] = None
+    report["details"] = details
     return json.dumps(report, ensure_ascii=False, indent=2)
 
 
@@ -181,11 +170,18 @@ def _build_report(
 @mcp.tool()
 def score_images(
     directory: str,
-    top: int | None = None,
-    threshold: float | None = None,
-    no_vlm: bool | None = None,
-    enable_composition: bool | None = None,
-    workers: int | None = None,
+    top: Optional[int] = None,
+    threshold: Optional[float] = None,
+    no_vlm: Optional[bool] = None,
+    enable_composition: Optional[bool] = None,
+    enable_noise: Optional[bool] = None,
+    enable_color: Optional[bool] = None,
+    enable_portrait: Optional[bool] = None,
+    dedup: Optional[bool] = None,
+    dedup_threshold: Optional[int] = None,
+    workers: Optional[int] = None,
+    vlm_provider: Optional[str] = None,
+    scene: Optional[str] = None,
 ) -> str:
     """对目录下的图片进行批量评分（递归子目录），返回 JSON 格式的评分报告。
 
@@ -195,7 +191,14 @@ def score_images(
         threshold: 分数阈值，设置后忽略 top（如 75.0 表示 >=75 分入选）
         no_vlm: 是否禁用 VLM 仅用 CV 评分（默认 False，有 API Key 时启用 VLM）
         enable_composition: 是否启用构图评分（实验性，默认 False）
+        enable_noise: 是否启用 BRISQUE 噪点评分（需 opencv-contrib-python，默认 False）
+        enable_color: 是否启用色彩丰富度评分（默认 False）
+        enable_portrait: 是否启用人像专项评分（需 face_recognition，默认 False）
+        dedup: 是否启用 PHash 图片去重（需 imagededup，默认 False）
+        dedup_threshold: PHash 汉明距离阈值（默认 8，越小越严格）
         workers: 并发线程数（默认 4）
+        vlm_provider: VLM 提供商（qwen / openai / anthropic / ollama，默认 qwen；非 qwen 需安装 litellm）
+        scene: 场景模式（auto / portrait / landscape / still_life，默认 auto 由 VLM 自行判断）
 
     Returns:
         JSON 字符串，包含 summary 和 images 数组。
@@ -208,7 +211,10 @@ def score_images(
         return _error(3, "目录中无支持格式的图片")
 
     config = _build_config(
-        directory, top, threshold, no_vlm, enable_composition, workers
+        directory, top, threshold, no_vlm, enable_composition,
+        enable_noise, enable_color, enable_portrait,
+        dedup, dedup_threshold, workers,
+        vlm_provider=vlm_provider, scene=scene,
     )
 
     if err := _validate_vlm(config):
@@ -216,7 +222,7 @@ def score_images(
 
     try:
         start = time.time()
-        scored = _make_scorer(config).score_paths(images)
+        scored = make_scorer(config).score_paths(images)
         elapsed_ms = int((time.time() - start) * 1000)
     except Exception as e:
         return _error(4, f"评分过程异常: {e}")
@@ -230,8 +236,14 @@ def score_images(
 @mcp.tool()
 def score_single_image(
     image_path: str,
-    no_vlm: bool | None = None,
-    enable_composition: bool | None = None,
+    no_vlm: Optional[bool] = None,
+    enable_composition: Optional[bool] = None,
+    enable_noise: Optional[bool] = None,
+    enable_color: Optional[bool] = None,
+    enable_portrait: Optional[bool] = None,
+    dedup_threshold: Optional[int] = None,
+    vlm_provider: Optional[str] = None,
+    scene: Optional[str] = None,
 ) -> str:
     """对单张图片进行评分，返回该图的详细评分数据。
 
@@ -239,6 +251,12 @@ def score_single_image(
         image_path: 图片文件的绝对路径
         no_vlm: 是否禁用 VLM 仅用 CV 评分（默认 False）
         enable_composition: 是否启用构图评分（实验性，默认 False）
+        enable_noise: 是否启用 BRISQUE 噪点评分（需 opencv-contrib-python，默认 False）
+        enable_color: 是否启用色彩丰富度评分（默认 False）
+        enable_portrait: 是否启用人像专项评分（需 face_recognition，默认 False）
+        dedup_threshold: PHash 汉明距离阈值（默认 8，单图模式仅用于配置一致性）
+        vlm_provider: VLM 提供商（qwen / openai / anthropic / ollama，默认 qwen；非 qwen 需安装 litellm）
+        scene: 场景模式（auto / portrait / landscape / still_life，默认 auto 由 VLM 自行判断）
 
     Returns:
         JSON 字符串，包含该图的 sharpness/exposure/score 等字段。
@@ -251,18 +269,22 @@ def score_single_image(
         return _error(3, f"不支持的图片格式: {p.suffix}")
 
     config = _build_config(
-        directory=str(p.parent), no_vlm=no_vlm, enable_composition=enable_composition
+        directory=str(p.parent), no_vlm=no_vlm,
+        enable_composition=enable_composition,
+        enable_noise=enable_noise, enable_color=enable_color,
+        enable_portrait=enable_portrait,
+        dedup_threshold=dedup_threshold,
+        vlm_provider=vlm_provider, scene=scene,
     )
 
     if err := _validate_vlm(config):
         return err
 
     try:
-        # 复用 _make_scorer 保证 CVEngine/VLMClient 装配逻辑与其他工具一致
-        # 注意：必须用 config.enable_composition（已解析为 bool），
-        # 不能直接用 enable_composition 参数（可能是 None）
-        start = time.time()
-        result = _make_scorer(config).score_one(image_path)
+        # 复用 make_scorer 保证 CVEngine/VLMClient 装配逻辑与其他工具一致
+        # 注意：必须用 config.enable_*（已解析为 bool），
+        # 不能直接用参数本身（可能是 None）
+        result = make_scorer(config).score_one(image_path)
     except Exception as e:
         return _error(4, f"评分过程异常: {e}")
 
@@ -273,7 +295,6 @@ def score_single_image(
             "total": 1,
             "selected": 0,
             "avg_score": result.score,
-            "elapsed_ms": int((time.time() - start) * 1000),
         },
         images=[asdict(result)],
     )
@@ -282,13 +303,20 @@ def score_single_image(
 @mcp.tool()
 def export_selected_images(
     directory: str,
-    top: int | None = None,
-    threshold: float | None = None,
-    no_vlm: bool | None = None,
-    enable_composition: bool | None = None,
-    dest_dir: str = "./flashgaze_selected",
+    top: Optional[int] = None,
+    threshold: Optional[float] = None,
+    no_vlm: Optional[bool] = None,
+    enable_composition: Optional[bool] = None,
+    enable_noise: Optional[bool] = None,
+    enable_color: Optional[bool] = None,
+    enable_portrait: Optional[bool] = None,
+    dedup: Optional[bool] = None,
+    dedup_threshold: Optional[int] = None,
+    dest_dir: str = "./精选",
     move: bool = False,
-    workers: int | None = None,
+    workers: Optional[int] = None,
+    vlm_provider: Optional[str] = None,
+    scene: Optional[str] = None,
 ) -> str:
     """评分后自动将高分图复制或移动到目标目录（同名文件自动追加序号后缀）。
 
@@ -298,9 +326,16 @@ def export_selected_images(
         threshold: 分数阈值（替代 top）
         no_vlm: 是否禁用 VLM（默认 False）
         enable_composition: 是否启用构图评分（实验性，默认 False）
-        dest_dir: 目标目录路径（默认 ./flashgaze_selected）
+        enable_noise: 是否启用 BRISQUE 噪点评分（需 opencv-contrib-python，默认 False）
+        enable_color: 是否启用色彩丰富度评分（默认 False）
+        enable_portrait: 是否启用人像专项评分（需 face_recognition，默认 False）
+        dedup: 是否启用 PHash 图片去重（需 imagededup，默认 False）
+        dedup_threshold: PHash 汉明距离阈值（默认 8，越小越严格）
+        dest_dir: 目标目录路径（默认 ./精选）
         move: True 移动文件，False 复制文件（默认 False）
         workers: 并发线程数
+        vlm_provider: VLM 提供商（qwen / openai / anthropic / ollama，默认 qwen；非 qwen 需安装 litellm）
+        scene: 场景模式（auto / portrait / landscape / still_life，默认 auto 由 VLM 自行判断）
 
     Returns:
         JSON 字符串，包含评分摘要和导出数量。
@@ -314,7 +349,10 @@ def export_selected_images(
 
     config = replace(
         _build_config(
-            directory, top, threshold, no_vlm, enable_composition, workers=workers
+            directory, top, threshold, no_vlm, enable_composition,
+            enable_noise, enable_color, enable_portrait,
+            dedup, dedup_threshold, workers=workers,
+            vlm_provider=vlm_provider, scene=scene,
         ),
         export=True,
         move=move,
@@ -324,7 +362,7 @@ def export_selected_images(
         return err
 
     try:
-        scored = _make_scorer(config).score_paths(images)
+        scored = make_scorer(config).score_paths(images)
     except Exception as e:
         return _error(4, f"评分过程异常: {e}")
 
@@ -357,11 +395,18 @@ def export_selected_images(
 @mcp.tool()
 def score_uploaded_images(
     image_paths: list[str],
-    top: int | None = None,
-    threshold: float | None = None,
-    no_vlm: bool | None = None,
-    enable_composition: bool | None = None,
-    workers: int | None = None,
+    top: Optional[int] = None,
+    threshold: Optional[float] = None,
+    no_vlm: Optional[bool] = None,
+    enable_composition: Optional[bool] = None,
+    enable_noise: Optional[bool] = None,
+    enable_color: Optional[bool] = None,
+    enable_portrait: Optional[bool] = None,
+    dedup: Optional[bool] = None,
+    dedup_threshold: Optional[int] = None,
+    workers: Optional[int] = None,
+    vlm_provider: Optional[str] = None,
+    scene: Optional[str] = None,
 ) -> str:
     """对上传的图片路径列表进行评分，返回 JSON 评分报告。
 
@@ -374,7 +419,14 @@ def score_uploaded_images(
         threshold: 分数阈值，设置后忽略 top
         no_vlm: 是否禁用 VLM 仅用 CV 评分（默认 False）
         enable_composition: 是否启用构图评分（实验性，默认 False）
+        enable_noise: 是否启用 BRISQUE 噪点评分（需 opencv-contrib-python，默认 False）
+        enable_color: 是否启用色彩丰富度评分（默认 False）
+        enable_portrait: 是否启用人像专项评分（需 face_recognition，默认 False）
+        dedup: 是否启用 PHash 图片去重（需 imagededup，默认 False）
+        dedup_threshold: PHash 汉明距离阈值（默认 8，越小越严格）
         workers: 并发线程数（默认 4）
+        vlm_provider: VLM 提供商（qwen / openai / anthropic / ollama，默认 qwen；非 qwen 需安装 litellm）
+        scene: 场景模式（auto / portrait / landscape / still_life，默认 auto 由 VLM 自行判断）
 
     Returns:
         JSON 字符串，包含 summary 和 images 数组。
@@ -394,7 +446,14 @@ def score_uploaded_images(
         threshold=threshold,
         no_vlm=no_vlm,
         enable_composition=enable_composition,
+        enable_noise=enable_noise,
+        enable_color=enable_color,
+        enable_portrait=enable_portrait,
+        dedup=dedup,
+        dedup_threshold=dedup_threshold,
         workers=workers,
+        vlm_provider=vlm_provider,
+        scene=scene,
     )
 
     if err := _validate_vlm(config):
@@ -402,7 +461,7 @@ def score_uploaded_images(
 
     try:
         start = time.time()
-        scored = _make_scorer(config).score_paths(valid_images)
+        scored = make_scorer(config).score_paths(valid_images)
         elapsed_ms = int((time.time() - start) * 1000)
     except Exception as e:
         return _error(4, f"评分过程异常: {e}")
@@ -421,12 +480,19 @@ def score_uploaded_images(
 @mcp.tool()
 def cleanup_workspace_images(
     workspace: str,
-    top: int | None = None,
-    threshold: float | None = None,
-    no_vlm: bool | None = None,
-    enable_composition: bool | None = None,
+    top: Optional[int] = None,
+    threshold: Optional[float] = None,
+    no_vlm: Optional[bool] = None,
+    enable_composition: Optional[bool] = None,
+    enable_noise: Optional[bool] = None,
+    enable_color: Optional[bool] = None,
+    enable_portrait: Optional[bool] = None,
+    dedup: Optional[bool] = None,
+    dedup_threshold: Optional[int] = None,
     dry_run: bool = True,
-    workers: int | None = None,
+    workers: Optional[int] = None,
+    vlm_provider: Optional[str] = None,
+    scene: Optional[str] = None,
 ) -> str:
     """对指定工作空间目录下的图片评分，并原地删除不符合要求的低分图。
 
@@ -442,8 +508,15 @@ def cleanup_workspace_images(
         threshold: 分数阈值，低于此值的图片将被删除（替代 top）
         no_vlm: 是否禁用 VLM 仅用 CV 评分（默认 False）
         enable_composition: 是否启用构图评分（实验性，默认 False）
+        enable_noise: 是否启用 BRISQUE 噪点评分（需 opencv-contrib-python，默认 False）
+        enable_color: 是否启用色彩丰富度评分（默认 False）
+        enable_portrait: 是否启用人像专项评分（需 face_recognition，默认 False）
+        dedup: 是否启用 PHash 图片去重（需 imagededup，默认 False）
+        dedup_threshold: PHash 汉明距离阈值（默认 8，越小越严格）
         dry_run: 试运行模式，只报告将要删除哪些文件，不实际删除（默认 True）
         workers: 并发线程数
+        vlm_provider: VLM 提供商（qwen / openai / anthropic / ollama，默认 qwen；非 qwen 需安装 litellm）
+        scene: 场景模式（auto / portrait / landscape / still_life，默认 auto 由 VLM 自行判断）
 
     Returns:
         JSON 字符串，包含评分摘要和将要删除/已删除的文件列表。
@@ -465,7 +538,14 @@ def cleanup_workspace_images(
         threshold=threshold,
         no_vlm=no_vlm,
         enable_composition=enable_composition,
+        enable_noise=enable_noise,
+        enable_color=enable_color,
+        enable_portrait=enable_portrait,
+        dedup=dedup,
+        dedup_threshold=dedup_threshold,
         workers=workers,
+        vlm_provider=vlm_provider,
+        scene=scene,
     )
 
     if err := _validate_vlm(config):
@@ -473,7 +553,7 @@ def cleanup_workspace_images(
 
     try:
         start = time.time()
-        scored = _make_scorer(config).score_paths(images)
+        scored = make_scorer(config).score_paths(images)
         elapsed_ms = int((time.time() - start) * 1000)
     except Exception as e:
         return _error(4, f"评分过程异常: {e}")

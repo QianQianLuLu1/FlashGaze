@@ -27,6 +27,27 @@ def _score(file: str, path: str, score: float, selected: bool = False, error=Non
     )
 
 
+def _score_with_vlm(
+    file: str, path: str, score: float,
+    vlm_reason: str, vlm_provider: str,
+    vlm_adjustment: float = 0.0,
+    selected: bool = False,
+) -> ImageScore:
+    """构造带 VLM 字段的 ImageScore（用于 VLM 扩展测试）。"""
+    return ImageScore(
+        file=file,
+        path=path,
+        sharpness=80.0,
+        exposure=70.0,
+        composition=None,
+        vlm_adjustment=vlm_adjustment,
+        score=score,
+        selected=selected,
+        vlm_reason=vlm_reason,
+        vlm_provider=vlm_provider,
+    )
+
+
 def _config(**overrides) -> Config:
     base = dict(directory=".")
     base.update(overrides)
@@ -187,10 +208,93 @@ def test_write_csv_manifest(tmp_path: Path):
     assert rows[0] == [
         "file", "path", "sharpness", "exposure", "composition",
         "vlm_adjustment", "score", "selected", "error",
+        "noise", "color", "face_count", "face_sharpness",
+        "portrait_bonus", "deduped",
+        "vlm_reason", "vlm_provider",
     ]
     assert len(rows) == 3  # 表头 + 2 行
     assert rows[1][0] == "a.jpg"
     assert rows[1][7] == "True"
+
+
+# ---------- VLM 扩展：vlm_reason / vlm_provider 字段输出（M8）----------
+
+def test_csv_includes_vlm_reason_and_provider_columns(tmp_path: Path):
+    """CSV 表头包含 vlm_reason / vlm_provider 两列。"""
+    scored = [_score("a.jpg", "/a.jpg", 90.0)]
+    path = tmp_path / "result.csv"
+    Exporter(_config()).write_manifest(scored, "csv", str(path))
+    with open(path, encoding="utf-8-sig") as f:
+        header = next(csv.reader(f))
+    assert "vlm_reason" in header
+    assert "vlm_provider" in header
+
+
+def test_csv_writes_vlm_fields_to_data_rows(tmp_path: Path):
+    """VLM 成功时 vlm_reason / vlm_provider 写入数据行。"""
+    scored = [
+        _score_with_vlm(
+            "a.jpg", "/a.jpg", 90.0,
+            vlm_reason="背景虚化", vlm_provider="qwen",
+            vlm_adjustment=5.0, selected=True,
+        ),
+    ]
+    path = tmp_path / "result.csv"
+    Exporter(_config()).write_manifest(scored, "csv", str(path))
+    with open(path, encoding="utf-8-sig") as f:
+        rows = list(csv.reader(f))
+    header = rows[0]
+    data_row = rows[1]
+    reason_idx = header.index("vlm_reason")
+    provider_idx = header.index("vlm_provider")
+    adj_idx = header.index("vlm_adjustment")
+    assert data_row[reason_idx] == "背景虚化"
+    assert data_row[provider_idx] == "qwen"
+    assert data_row[adj_idx] == "5.0"
+
+
+def test_csv_empty_vlm_fields_when_not_set(tmp_path: Path):
+    """未启用 VLM 时 vlm_reason / vlm_provider 列为空串。"""
+    scored = [_score("a.jpg", "/a.jpg", 90.0)]
+    path = tmp_path / "result.csv"
+    Exporter(_config()).write_manifest(scored, "csv", str(path))
+    with open(path, encoding="utf-8-sig") as f:
+        rows = list(csv.reader(f))
+    header = rows[0]
+    data_row = rows[1]
+    reason_idx = header.index("vlm_reason")
+    provider_idx = header.index("vlm_provider")
+    assert data_row[reason_idx] == ""
+    assert data_row[provider_idx] == ""
+
+
+def test_json_includes_vlm_reason_and_provider_fields(tmp_path: Path):
+    """JSON 输出的 images[*] 对象包含 vlm_reason / vlm_provider 字段。"""
+    scored = [
+        _score_with_vlm(
+            "a.jpg", "/a.jpg", 90.0,
+            vlm_reason="背景虚化", vlm_provider="qwen",
+            vlm_adjustment=5.0, selected=True,
+        ),
+    ]
+    path = tmp_path / "result.json"
+    Exporter(_config()).write_manifest(scored, "json", str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    img = data["images"][0]
+    assert img["vlm_reason"] == "背景虚化"
+    assert img["vlm_provider"] == "qwen"
+    assert img["vlm_adjustment"] == 5.0
+
+
+def test_json_empty_vlm_fields_when_not_set(tmp_path: Path):
+    """未启用 VLM 时 JSON 中 vlm_reason/vlm_provider 为空串。"""
+    scored = [_score("a.jpg", "/a.jpg", 90.0)]
+    path = tmp_path / "result.json"
+    Exporter(_config()).write_manifest(scored, "json", str(path))
+    data = json.loads(path.read_text(encoding="utf-8"))
+    img = data["images"][0]
+    assert img["vlm_reason"] == ""
+    assert img["vlm_provider"] == ""
 
 
 def test_write_manifest_invalid_format(tmp_path: Path):
