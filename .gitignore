@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg-link/
+build/
+dist/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# --- FlashGaze 扁平化补充 ---
+.mypy_cache/
+.ruff_cache/
+.pytest_tmp/
+.codex-plugin/
+.uploads/
+.trae-html-share-packages/
+devdocs_local/
+FLATTEN_PLAN.md
+
+# Dev / planning artifacts
+# 开发/规划过程文档不进发布根目录（已迁入 docs/dev/ 的按步骤4保留）；以下为根目录防护性忽略
+/flashgaze-issues-analysis/
+/flashgaze-split-issues-guide/
+/flashgaze-修复执行指南/
+/flashgaze-问题分析与修复指南.html
+/CODE_AUDIT_REPORT.md
+/IMPROVEMENT_PLAN.md
+/flashgaze/*_PLAN.md
+/README_SYNC_PLAN_V3.md
