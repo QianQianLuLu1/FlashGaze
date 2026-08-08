@@ -56,6 +56,7 @@ setup(
         "xlsx": ["openpyxl>=3.1.0,<4"],
         "all": [
             "opencv-contrib-python-headless>=4.8.0,<6",
+            "face_recognition>=1.3.0,<2",
             "imagededup>=0.2.0,<1",
             "litellm>=1.40,<2",
             "gradio>=6.0.0,<7",

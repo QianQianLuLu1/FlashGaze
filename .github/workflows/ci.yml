@@ -60,8 +60,7 @@ jobs:
       - name: Install dependencies (with safe extras)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[cv-enhanced,dedup,vlm-multi,gui,exif,xlsx]"
-          pip install "mcp>=1.2.0,<2.0.0"   # mcp 版本钉死
+          pip install -e ".[cv-enhanced,portrait,dedup,vlm-multi,gui,exif,xlsx,mcp]"
           pip install -r requirements-dev.txt   # 测试工具链（pytest/pytest-cov）；pytest 唯一来源，必装否则 pytest 步骤失败
           pip install -r requirements-extras.txt
 
