@@ -3,4 +3,4 @@ opencv-contrib-python-headless>=4.8.0
 # PHash 去重测试（M5）
 imagededup>=0.2.0
 # VLM 多提供商测试所需（非 qwen provider 走 LiteLLM 统一调用层）
-litellm>=1.40
+litellm>=1.95.0
