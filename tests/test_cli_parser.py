@@ -231,6 +231,8 @@ def test_env_api_key_used_when_no_cli(monkeypatch):
 
 def test_defaults_when_nothing_provided(monkeypatch):
     """无任何配置时使用 defaults.py 的默认值。"""
+    # 同上：钉住核数，否则 DEFAULT_WORKERS=4 在 2 核 CI 上被钳制成 2，掩盖真正要验的「默认值」语义
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
     monkeypatch.delenv("FLASHGAZE_API_KEY", raising=False)
     monkeypatch.delenv("FLASHGAZE_API_BASE", raising=False)
     monkeypatch.delenv("FLASHGAZE_MODEL", raising=False)

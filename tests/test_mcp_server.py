@@ -37,8 +37,10 @@ from flashgaze.mcp_server import (
 class TestBuildConfig:
     """验证 _build_config 委托 build_config，且参数默认 None 时 env 生效。"""
 
-    def test_defaults_return_config(self):
+    def test_defaults_return_config(self, monkeypatch):
         """不传任何 override 时，应回落到 defaults.py 默认值。"""
+        # 钉住核数，否则 DEFAULT_WORKERS=4 在 2 核 CI 上被钳制成 2，掩盖真正要验的「默认值」语义
+        monkeypatch.setattr(os, "cpu_count", lambda: 16)
         cfg = _build_config(directory="/tmp")
         assert cfg.directory == "/tmp"
         assert cfg.top == 30  # DEFAULT_TOP
