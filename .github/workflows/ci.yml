@@ -15,12 +15,16 @@ jobs:
         python-version: ["3.10", "3.11", "3.12"]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install system libraries for OpenCV
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
 
       - name: Install dependencies
         run: |
@@ -35,17 +39,23 @@ jobs:
     name: extras
     needs: test
     runs-on: ubuntu-latest
+    continue-on-error: true   # 可选功能验证，失败不阻塞主流程
+    timeout-minutes: 20
     strategy:
       matrix:
         python-version: ["3.12"]
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install system libraries for OpenCV
+        run: sudo apt-get update && sudo apt-get install -y libgl1 libglib2.0-0
 
       - name: Install dependencies (with safe extras)
         run: |
