@@ -1,5 +1,7 @@
 # CV 增强维度测试所需（M2/M3/M4/M5）
 opencv-contrib-python-headless>=4.8.0
+# 人像评分测试所需（portrait extra）
+face_recognition>=1.3.0
 # PHash 去重测试（M5）
 imagededup>=0.2.0
 # VLM 多提供商测试所需（非 qwen provider 走 LiteLLM 统一调用层）

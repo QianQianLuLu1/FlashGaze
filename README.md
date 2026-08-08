@@ -8,7 +8,7 @@ Hybrid CV + VLM engine for scoring and filtering photos on your machine, designe
 
 [![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-274%20passed-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-241%20passed-brightgreen.svg)](#testing)
 [![Version](https://img.shields.io/badge/version-0.1.0-orange.svg)](#)
 
 **[English](#english) · [中文](#中文)**
@@ -494,7 +494,7 @@ pip install -r requirements-dev.txt
 pytest -v
 ```
 
-274 passed / 20 skipped (294 total) covering CV engine, VLM client, hybrid scorer, exporter, CLI parser, end-to-end flows, reproducibility, and config layers.
+241 passed / 21 skipped (262 total) covering CV engine, VLM client, hybrid scorer, exporter, CLI parser, end-to-end flows, reproducibility, and config layers.
 
 ## Tech Stack
 
@@ -965,7 +965,7 @@ pip install -r requirements-dev.txt
 pytest -v
 ```
 
-274 项测试（274 通过 / 20 跳过，共 294），覆盖 CV 引擎、VLM 客户端、混合评分器、导出器、CLI 解析器、端到端流程、可复现性和配置层。
+241 项测试（241 通过 / 21 跳过，共 262），覆盖 CV 引擎、VLM 客户端、混合评分器、导出器、CLI 解析器、端到端流程、可复现性和配置层。
 
 ## 技术栈
 
