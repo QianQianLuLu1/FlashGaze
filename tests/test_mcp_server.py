@@ -46,8 +46,10 @@ class TestBuildConfig:
         assert cfg.no_vlm is False
         assert cfg.enable_composition is False
 
-    def test_workers_override(self):
+    def test_workers_override(self, monkeypatch):
         """显式传 workers 应覆盖 env 与 default。"""
+        # 钉住核数，否则 workers=8 在少核机器上被钳制，掩盖真正要验的「显式参数优先」语义
+        monkeypatch.setattr(os, "cpu_count", lambda: 16)
         cfg = _build_config(directory="/tmp", workers=8)
         assert cfg.workers == 8
 

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -77,7 +78,9 @@ def test_parse_output_path():
     assert cfg.output_path == "report.json"
 
 
-def test_parse_workers():
+def test_parse_workers(monkeypatch):
+    # workers 会被钳制到 min(cpu_count, 16)；钉住核数，本用例才只检验解析本身而非运行机器
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
     cfg = _parse(["./photos", "--workers", "8"])
     assert cfg.workers == 8
 
@@ -201,8 +204,10 @@ def test_priority_env_over_file(monkeypatch, tmp_path: Path):
     assert cfg.model == "file-model"  # env 未设置 model，回退到 file
 
 
-def test_priority_file_over_default(tmp_path: Path):
+def test_priority_file_over_default(monkeypatch, tmp_path: Path):
     """配置文件优先于默认值。"""
+    # 同上：钉住核数，否则 workers=12 在少核机器上会被钳制，掩盖真正要验的优先级语义
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
     config_file = tmp_path / "cfg.json"
     config_file.write_text(
         json.dumps({
