@@ -39,7 +39,7 @@ setup(
         "pillow-heif>=0.15.0,<2",
     ],
     extras_require={
-        "mcp": ["mcp>=1.2.0,<2.0.0"],
+        "mcp": ["mcp>=1.2.0,<3.0.0"],
         # CV 增强维度（M2/M3/M4/M5）：默认不安装，按需 extras 启用
         "cv-enhanced": ["opencv-contrib-python-headless>=4.8.0,<6"],
         "portrait": ["face_recognition>=1.3.0,<2"],
