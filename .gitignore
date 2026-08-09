@@ -41,3 +41,7 @@ Thumbs.db
 
 # WorkBuddy
 .workbuddy/
+
+# 本地计划与救援目录，不进仓库
+_plans/
+_rescued/
