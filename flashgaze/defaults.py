@@ -76,8 +76,9 @@ DEFAULT_CSV_OUTPUT = "flashgaze_result.csv"
 DEFAULT_XLSX_OUTPUT = "flashgaze_result.xlsx"
 
 # ── CV 增强维度常量（M2/M4/M5）──────────────────────────
-# BRISQUE 模型文件目录（相对包路径，需用户自行下载模型文件）
-BRISQUE_MODEL_DIR = "flashgaze/models/brisque"
+# BRISQUE 模型目录固定在包内 flashgaze/models/brisque/，
+# 由 cv_engine 通过 importlib.resources.files() 按包导入位置解析，
+# 与工作目录无关，故不再定义路径常量。
 # 人像加分上限（每张人脸 +1，首张 +3，封顶 5）
 PORTRAIT_BONUS_MAX = 5.0
 # PHash 去重默认汉明距离阈值（越小越严格）

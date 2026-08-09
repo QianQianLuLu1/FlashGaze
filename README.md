@@ -303,7 +303,7 @@ All four enhancement dimensions are **off by default** and degrade gracefully wh
 
 | Dimension | Install | Use Case |
 |---|---|---|
-| Noise (BRISQUE) | `pip install -e ".[cv-enhanced]"` + download BRISQUE model files into `flashgaze/models/brisque/` (see `flashgaze/models/brisque/README.md`) | Penalize noisy/compressed images |
+| Noise (BRISQUE) | `pip install -e ".[cv-enhanced]"` + download BRISQUE model files into the package dir `flashgaze/models/brisque/` (see `flashgaze/models/brisque/README.md`; locate the dir with `python -c "from importlib.resources import files; print(files('flashgaze.models') / 'brisque')"`) | Penalize noisy/compressed images |
 | Color richness | Built-in (OpenCV) | Reward diverse, saturated color palettes |
 | Portrait | `pip install -e ".[portrait]"` | Boost images containing faces; verify face-region sharpness |
 | Dedup | `pip install -e ".[dedup]"` | Collapse near-duplicate bursts, keep only the highest score |
@@ -774,7 +774,7 @@ flashgaze ./landscapes --scene landscape --top 30 --json
 
 | 维度 | 安装命令 | 适用场景 |
 |---|---|---|
-| 噪点（BRISQUE） | `pip install -e ".[cv-enhanced]"` + 下载 BRISQUE 模型文件至 `flashgaze/models/brisque/`（详见 `flashgaze/models/brisque/README.md`） | 惩罚噪点多/压缩重的图片 |
+| 噪点（BRISQUE） | `pip install -e ".[cv-enhanced]"` + 下载 BRISQUE 模型文件至包内目录 `flashgaze/models/brisque/`（见 `flashgaze/models/brisque/README.md`；用 `python -c "from importlib.resources import files; print(files('flashgaze.models') / 'brisque')"` 定位目录） | 惩罚噪点多/压缩重的图片 |
 | 色彩丰富度 | 内置（OpenCV） | 奖励色彩多样、饱和度高的图片 |
 | 人像 | `pip install -e ".[portrait]"` | 加分含人脸的图，并校验人脸区域清晰度 |
 | 去重 | `pip install -e ".[dedup]"` | 合并连拍相似图，仅保留最高分 |

@@ -13,7 +13,6 @@ import cv2
 import numpy as np
 
 from flashgaze.defaults import (
-    BRISQUE_MODEL_DIR,
     DOWNSCALE_THRESHOLD,
     EXPOSURE_BRIGHT_THRESHOLD,
     EXPOSURE_DARK_THRESHOLD,
@@ -29,8 +28,12 @@ _BRISQUE_API = None
 _BRISQUE_MODEL_DIR: Path | None = None
 try:
     from cv2.quality import QualityBRISQUE as _BRISQUE_API  # type: ignore
-    _BRISQUE_MODEL_DIR = Path(BRISQUE_MODEL_DIR)
-except ImportError:
+    # 包内资源目录：用 importlib.resources.files() 按包的导入位置解析，
+    # 与进程当前工作目录无关。可编辑安装（源码目录）与 wheel 安装（site-packages）都正确。
+    from importlib.resources import files as _package_files
+    _BRISQUE_MODEL_DIR = _package_files("flashgaze.models") / "brisque"
+except Exception:
+    # 依赖缺失或资源定位异常，一律降级，绝不阻塞 import flashgaze
     _BRISQUE_API = None
     _BRISQUE_MODEL_DIR = None
 
