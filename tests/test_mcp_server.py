@@ -288,9 +288,7 @@ class TestExportSelectedImages:
         # 导出目录应有文件
         assert any(dest.iterdir())
 
-    def test_dest_dir_outside_workspace_rejected(
-        self, tmp_path: Path, sharp_img: str
-    ) -> None:
+    def test_dest_dir_outside_workspace_rejected(self, tmp_path: Path, sharp_img: str) -> None:
         """M2 路径穿越防护：dest_dir 越出 workspace 时被硬拒绝（code=1，含越界提示）。
 
         不进入任何评分/导出逻辑即可拦截，杜绝把选中图写到 workspace 之外的任意路径。
@@ -302,9 +300,7 @@ class TestExportSelectedImages:
         shutil.copy(sharp_img, dst)
         # 指向 workspace 兄弟目录（绝对路径，明确越界）
         outside = tmp_path / "escape" / "out"
-        raw = export_selected_images(
-            str(dst.parent), no_vlm=True, dest_dir=str(outside), top=1
-        )
+        raw = export_selected_images(str(dst.parent), no_vlm=True, dest_dir=str(outside), top=1)
         data = json.loads(raw)
         assert data["status"] == "error"
         assert data["code"] == 1

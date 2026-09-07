@@ -492,7 +492,15 @@ def test_cleanup_force_flag_parsed(tmp_path: Path) -> None:
 def test_cleanup_confirm_fingerprint_flag(tmp_path: Path) -> None:
     """--confirm-fingerprint 解析为 ns.confirm_fingerprint（force 的放行凭证）。"""
     ns = CLIParser().parse_namespace(
-        ["cleanup", str(tmp_path), "--no-vlm", "--apply", "--force", "--confirm-fingerprint", "abc123def456"]
+        [
+            "cleanup",
+            str(tmp_path),
+            "--no-vlm",
+            "--apply",
+            "--force",
+            "--confirm-fingerprint",
+            "abc123def456",
+        ]
     )
     assert ns.confirm_fingerprint == "abc123def456"
     # 默认 None（未提供指纹 = 未核对，核心层据此拦截）

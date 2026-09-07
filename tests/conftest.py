@@ -330,8 +330,13 @@ def resolution_img(request: pytest.FixtureRequest, fixtures_dir: Path) -> Resolu
 def format_img(request: pytest.FixtureRequest, fixtures_dir: Path) -> str:
     """参数化格式固件（512x512 同内容不同编码）：PNG/WebP/BMP/TIFF/HEIC/灰度/调色板。"""
     path = fixtures_dir / FORMAT_SPECS[request.param]
-    if request.param == "heic" and not path.exists():
-        pytest.skip("未安装 pillow-heif，HEIC 固件未生成")
+    # HEIC 固件随仓库分发，但解码必须 pillow-heif（image_io 惰性注册）：
+    # 「文件存在」不代表「环境能解码」，以能力守卫，否则缺依赖时
+    # test_formats_decode_to_rgb_512[heic] 报 ImageReadError 而非跳过。
+    if request.param == "heic":
+        pytest.importorskip("pillow_heif")
+    if not path.exists():
+        pytest.skip(f"固件 {path.name} 未生成")
     return str(path)
 
 

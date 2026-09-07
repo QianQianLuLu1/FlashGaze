@@ -584,8 +584,7 @@ def test_build_report_phase1_timeout_section(tmp_path: Path) -> None:
 
     [增强类] 修复前 build_report 无 phase1_stats 参数，调用即 TypeError（红灯）。"""
     scored = [
-        _score(f"a{i}.jpg", str(tmp_path / f"a{i}.jpg"), 90.0, selected=True)
-        for i in range(4)
+        _score(f"a{i}.jpg", str(tmp_path / f"a{i}.jpg"), 90.0, selected=True) for i in range(4)
     ]
     stats = {"timed_out": 3, "pool_exhausted": 2, "rebuilds": 1}
     summary = Exporter.build_report(scored, 0, phase1_stats=stats)["summary"]
@@ -630,7 +629,9 @@ def test_export_dest_is_file_recorded_in_last_failures(tmp_path: Path) -> None:
     moved = exporter.export_images(scored, str(dest))
 
     assert moved == 0
-    assert exporter.last_failures == [{"file": "", "path": str(dest), "error": "dest_not_directory"}]
+    assert exporter.last_failures == [
+        {"file": "", "path": str(dest), "error": "dest_not_directory"}
+    ]
 
 
 def test_export_dest_is_file_without_candidate_is_not_failure(

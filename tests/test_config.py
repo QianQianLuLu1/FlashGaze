@@ -507,9 +507,7 @@ def test_build_config_zero_weights_raises(monkeypatch: pytest.MonkeyPatch) -> No
             weights=MappingProxyType({"sharpness": 0.0, "exposure": 0.0}),
         )
 
-    monkeypatch.setattr(
-        "flashgaze.utils.config._adjust_weights_for_enabled_features", _force_zero
-    )
+    monkeypatch.setattr("flashgaze.utils.config._adjust_weights_for_enabled_features", _force_zero)
     with pytest.raises(ValueError, match="权重总和必须为正数"):
         build_config(".", weights={"sharpness": 0.5, "exposure": 0.5})
 

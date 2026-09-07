@@ -91,9 +91,7 @@ def run_scoring(
     # 不传则保持本地无限制（向后兼容）。
     if allowed_roots:
         resolved_dir = Path(directory).resolve()
-        if not any(
-            is_within_directory(resolved_dir, Path(r).resolve()) for r in allowed_roots
-        ):
+        if not any(is_within_directory(resolved_dir, Path(r).resolve()) for r in allowed_roots):
             return (
                 ExitCode.PARAM_ERROR,
                 f"图片目录不在允许的访问范围内: {directory}",
@@ -231,8 +229,7 @@ def export_manifest(
     dest = Path(path)
     dest = (ws / dest).resolve() if not dest.is_absolute() else dest.resolve()
     if not (
-        is_within_directory(dest, ws)
-        or is_within_directory(dest, Path(tempfile.gettempdir()))
+        is_within_directory(dest, ws) or is_within_directory(dest, Path(tempfile.gettempdir()))
     ):
         return (
             False,

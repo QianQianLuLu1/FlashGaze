@@ -22,6 +22,7 @@
 
 纯逻辑（parse_* / evaluate / load_history / render_*）与 I/O 分离，便于本地单测。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -52,14 +53,14 @@ MODULE_OWNERS = {
 }
 
 DEFAULT_CONFIG = {
-    "abs_warn": 60.0,        # R1 绝对下限（%）
-    "drop_pp": 5.0,          # R2 周环比劣化幅度（百分点）
-    "n_drop": 3,             # R2 连续劣化快照数
-    "k_fail": 3,             # R3 同一用例持续失败运行数
-    "crit_line": 50.0,       # R4 临界绝对下限（%）
-    "m_unfixed": 2,          # R4 触发后未修复的持续快照数
-    "recover_line": 70.0,    # R5 恢复绝对下限（%）
-    "recover_clean": 2,      # R5 连续无失败快照数
+    "abs_warn": 60.0,  # R1 绝对下限（%）
+    "drop_pp": 5.0,  # R2 周环比劣化幅度（百分点）
+    "n_drop": 3,  # R2 连续劣化快照数
+    "k_fail": 3,  # R3 同一用例持续失败运行数
+    "crit_line": 50.0,  # R4 临界绝对下限（%）
+    "m_unfixed": 2,  # R4 触发后未修复的持续快照数
+    "recover_line": 70.0,  # R5 恢复绝对下限（%）
+    "recover_clean": 2,  # R5 连续无失败快照数
 }
 
 
@@ -93,8 +94,12 @@ def parse_coverage(xml_path: Path) -> dict[str, dict]:
     result: dict[str, dict] = {}
     for mod in MODULES:
         result[mod] = {
-            "line_pct": None, "branch_pct": None,
-            "line_total": 0, "line_covered": 0, "branch_total": 0, "branch_covered": 0,
+            "line_pct": None,
+            "branch_pct": None,
+            "line_total": 0,
+            "line_covered": 0,
+            "branch_total": 0,
+            "branch_covered": 0,
             "present": False,
         }
 
@@ -114,8 +119,14 @@ def parse_coverage(xml_path: Path) -> dict[str, dict]:
         filename = (cls.get("filename") or "").replace("\\", "/")
         if not filename:
             continue
-        match = next((m for m, prefix in MODULE_PATH_PREFIX.items()
-                      if filename == f"{prefix}.py" or filename.startswith(f"{prefix}/")), None)
+        match = next(
+            (
+                m
+                for m, prefix in MODULE_PATH_PREFIX.items()
+                if filename == f"{prefix}.py" or filename.startswith(f"{prefix}/")
+            ),
+            None,
+        )
         if match is None:
             continue
         lines = cls.find("lines")
@@ -195,17 +206,20 @@ def load_history(history_path: Path) -> list[dict]:
 # ── 判定层 ────────────────────────────────────────────────────────────────
 @dataclass
 class Decision:
-    decision: str                       # "ok" | "warning" | "critical" | "recovered"
-    level: str                          # 与 decision 同义的人类可读级别
-    actions: dict = field(default_factory=dict)  # {create_issue, write_lock, clear_lock, close_issue}
-    warnings: list[dict] = field(default_factory=list)   # 触发的规则明细
+    decision: str  # "ok" | "warning" | "critical" | "recovered"
+    level: str  # 与 decision 同义的人类可读级别
+    actions: dict = field(
+        default_factory=dict
+    )  # {create_issue, write_lock, clear_lock, close_issue}
+    warnings: list[dict] = field(default_factory=list)  # 触发的规则明细
     criticals: list[dict] = field(default_factory=list)
     issue_text: str = ""
     snapshot: dict = field(default_factory=dict)
 
 
-def evaluate(modules: dict[str, dict], failures: list[str], history: list[dict],
-             cfg: dict) -> Decision:
+def evaluate(
+    modules: dict[str, dict], failures: list[str], history: list[dict], cfg: dict
+) -> Decision:
     """核心判定：输入本次模块覆盖率、失败用例、历史快照，输出 Decision。"""
     ts = datetime.now(timezone.utc).isoformat()
     snapshot = {
@@ -223,17 +237,31 @@ def evaluate(modules: dict[str, dict], failures: list[str], history: list[dict],
     # R1：绝对下限（仅对有覆盖率数据的模块判定）
     for m, pct in present.items():
         if pct < cfg["abs_warn"]:
-            warnings.append({"rule": "R1", "module": m, "value": pct,
-                             "threshold": cfg["abs_warn"], "msg": f"{m} 覆盖率 {pct}% 低于下限 {cfg['abs_warn']}%"})
+            warnings.append(
+                {
+                    "rule": "R1",
+                    "module": m,
+                    "value": pct,
+                    "threshold": cfg["abs_warn"],
+                    "msg": f"{m} 覆盖率 {pct}% 低于下限 {cfg['abs_warn']}%",
+                }
+            )
 
     # R4（临界绝对下限）
     for m, pct in present.items():
         if pct < cfg["crit_line"]:
-            criticals.append({"rule": "R4", "module": m, "value": pct,
-                              "threshold": cfg["crit_line"], "msg": f"{m} 覆盖率 {pct}% 低于临界值 {cfg['crit_line']}%"})
+            criticals.append(
+                {
+                    "rule": "R4",
+                    "module": m,
+                    "value": pct,
+                    "threshold": cfg["crit_line"],
+                    "msg": f"{m} 覆盖率 {pct}% 低于临界值 {cfg['crit_line']}%",
+                }
+            )
 
     # R2：连续 N 个快照周环比降幅 >= drop_pp
-    recent = [h for h in history if h.get("modules")][- (cfg["n_drop"]):]
+    recent = [h for h in history if h.get("modules")][-(cfg["n_drop"]) :]
     for m in MODULES:
         seq = [h["modules"].get(m) for h in recent]
         if None in seq:
@@ -241,38 +269,71 @@ def evaluate(modules: dict[str, dict], failures: list[str], history: list[dict],
         consecutive = 0
         ok = True
         for i in range(1, len(seq)):
-            if seq[i] is not None and seq[i - 1] is not None and (seq[i - 1] - seq[i]) >= cfg["drop_pp"]:
+            if (
+                seq[i] is not None
+                and seq[i - 1] is not None
+                and (seq[i - 1] - seq[i]) >= cfg["drop_pp"]
+            ):
                 consecutive += 1
             else:
                 ok = False
                 break
         if ok and len(seq) >= cfg["n_drop"] and consecutive >= cfg["n_drop"] - 1:
-            warnings.append({"rule": "R2", "module": m, "seq": seq,
-                             "msg": f"{m} 连续 {len(seq)} 个快照下降（{seq}），累计降 {round(seq[0]-seq[-1],2)}pp"})
+            warnings.append(
+                {
+                    "rule": "R2",
+                    "module": m,
+                    "seq": seq,
+                    "msg": f"{m} 连续 {len(seq)} 个快照下降（{seq}），累计降 {round(seq[0] - seq[-1], 2)}pp",
+                }
+            )
 
     # R3：同一用例在最近 K 个快照中持续失败
-    fail_hist = [set(h.get("failures", [])) for h in history[-cfg["k_fail"]:]]
+    fail_hist = [set(h.get("failures", [])) for h in history[-cfg["k_fail"] :]]
     if len(fail_hist) >= cfg["k_fail"]:
         for nodeid in set().union(*fail_hist):
             if all(nodeid in s for s in fail_hist):
-                warnings.append({"rule": "R3", "module": nodeid.split("::")[0], "nodeid": nodeid,
-                                 "msg": f"用例 {nodeid} 连续 {cfg['k_fail']} 次运行失败"})
+                warnings.append(
+                    {
+                        "rule": "R3",
+                        "module": nodeid.split("::")[0],
+                        "nodeid": nodeid,
+                        "msg": f"用例 {nodeid} 连续 {cfg['k_fail']} 次运行失败",
+                    }
+                )
 
     # R4（未修复持续）：历史中最近一次 warning 触发的模块，再持续 M 快照仍劣化
     if history:
-        last_warn = next((h for h in reversed(history) if h.get("decision") in ("warning", "critical")), None)
+        last_warn = next(
+            (h for h in reversed(history) if h.get("decision") in ("warning", "critical")), None
+        )
         if last_warn is not None:
             lag = len(history) - history.index(last_warn) - 1
             if lag >= cfg["m_unfixed"]:
-                criticals.append({"rule": "R4", "module": "aggregate", "lag": lag,
-                                  "msg": f"劣化自上次告警已持续 {lag} 个快照未修复（阈值 {cfg['m_unfixed']}）"})
+                criticals.append(
+                    {
+                        "rule": "R4",
+                        "module": "aggregate",
+                        "lag": lag,
+                        "msg": f"劣化自上次告警已持续 {lag} 个快照未修复（阈值 {cfg['m_unfixed']}）",
+                    }
+                )
 
     # 决策与动作
     no_fail = len(failures) == 0
-    all_above_recover = all(p is not None and p >= cfg["recover_line"] for p in present.values()) if present else False
+    all_above_recover = (
+        all(p is not None and p >= cfg["recover_line"] for p in present.values())
+        if present
+        else False
+    )
 
     decision = "ok"
-    actions: dict = {"create_issue": False, "write_lock": False, "clear_lock": False, "close_issue": False}
+    actions: dict = {
+        "create_issue": False,
+        "write_lock": False,
+        "clear_lock": False,
+        "close_issue": False,
+    }
 
     if criticals:
         decision = "critical"
@@ -283,12 +344,20 @@ def evaluate(modules: dict[str, dict], failures: list[str], history: list[dict],
         actions["create_issue"] = True
     elif all_above_recover and no_fail and len(history) >= cfg["recover_clean"]:
         # R5 恢复：最近 recover_clean 个快照均达标且无失败
-        tail = history[-cfg["recover_clean"]:]
-        tail_ok = all(
-            all(p is not None and p >= cfg["recover_line"] for p in h.get("modules", {}).values() if p is not None)
-            and len(h.get("failures", [])) == 0
-            for h in tail
-        ) if tail else False
+        tail = history[-cfg["recover_clean"] :]
+        tail_ok = (
+            all(
+                all(
+                    p is not None and p >= cfg["recover_line"]
+                    for p in h.get("modules", {}).values()
+                    if p is not None
+                )
+                and len(h.get("failures", [])) == 0
+                for h in tail
+            )
+            if tail
+            else False
+        )
         if tail_ok:
             decision = "recovered"
             actions["clear_lock"] = True
@@ -296,12 +365,19 @@ def evaluate(modules: dict[str, dict], failures: list[str], history: list[dict],
 
     issue_text = _render_issue(decision, warnings, criticals, snapshot)
     return Decision(
-        decision=decision, level=decision, actions=actions,
-        warnings=warnings, criticals=criticals, issue_text=issue_text, snapshot=snapshot,
+        decision=decision,
+        level=decision,
+        actions=actions,
+        warnings=warnings,
+        criticals=criticals,
+        issue_text=issue_text,
+        snapshot=snapshot,
     )
 
 
-def _render_issue(decision: str, warnings: list[dict], criticals: list[dict], snapshot: dict) -> str:
+def _render_issue(
+    decision: str, warnings: list[dict], criticals: list[dict], snapshot: dict
+) -> str:
     """生成 Issue / 评论 Markdown 文本。"""
     emoji = {"ok": "✅", "warning": "⚠️", "critical": "🚨", "recovered": "🟢"}.get(decision, "•")
     lines = [f"## {emoji} 可选模块健康度 — {decision.upper()}", ""]
@@ -327,7 +403,9 @@ def _render_issue(decision: str, warnings: list[dict], criticals: list[dict], sn
         for w in warnings:
             lines.append(f"- [{w['rule']}] {w['msg']}")
     lines.append("")
-    lines.append("> 由 `.github/workflows/extras-health.yml` 自动生成。详见 `docs/extras-governance.md`。")
+    lines.append(
+        "> 由 `.github/workflows/extras-health.yml` 自动生成。详见 `docs/extras-governance.md`。"
+    )
     return "\n".join(lines)
 
 
@@ -343,34 +421,44 @@ def render_benchmark(snapshot: dict, out_path: Path) -> None:
         pct = snapshot["modules"].get(m)
         if pct is None:
             continue
-        entries.append({
-            "name": m,
-            "unit": "%",
-            "value": pct,
-            "range": "RANGE",
-            "extra": ts,
-        })
+        entries.append(
+            {
+                "name": m,
+                "unit": "%",
+                "value": pct,
+                "range": "RANGE",
+                "extra": ts,
+            }
+        )
     out_path.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def write_outputs(out_dir: Path, decision: Decision, history: list[dict]) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "snapshot.json").write_text(
-        json.dumps(decision.snapshot, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(decision.snapshot, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
     (out_dir / "decision.json").write_text(
-        json.dumps({
-            "decision": decision.decision,
-            "level": decision.level,
-            "actions": decision.actions,
-            "warnings": decision.warnings,
-            "criticals": decision.criticals,
-            "issue_text": decision.issue_text,
-        }, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(
+            {
+                "decision": decision.decision,
+                "level": decision.level,
+                "actions": decision.actions,
+                "warnings": decision.warnings,
+                "criticals": decision.criticals,
+                "issue_text": decision.issue_text,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     render_benchmark(decision.snapshot, out_dir / "benchmark.json")
     # 历史追加本快照
     history.append(decision.snapshot)
     (out_dir / "history.json").write_text(
-        json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+        json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 # ── 入口 ──────────────────────────────────────────────────────────────────
@@ -378,9 +466,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="FlashGaze extras health evaluator")
     parser.add_argument("--coverage", required=True, type=Path, help="coverage.xml 路径")
     parser.add_argument("--junit", required=False, type=Path, help="junit.xml 路径（可选）")
-    parser.add_argument("--history", required=False, type=Path, help="历史 history.json 路径（可选）")
+    parser.add_argument(
+        "--history", required=False, type=Path, help="历史 history.json 路径（可选）"
+    )
     parser.add_argument("--out-dir", required=True, type=Path, help="输出目录")
-    parser.add_argument("--config", required=False, type=Path, help="阈值配置 JSON（可选，覆盖默认）")
+    parser.add_argument(
+        "--config", required=False, type=Path, help="阈值配置 JSON（可选，覆盖默认）"
+    )
     args = parser.parse_args(argv)
 
     cfg = dict(DEFAULT_CONFIG)
@@ -398,9 +490,11 @@ def main(argv: list[str] | None = None) -> int:
     decision = evaluate(modules, failures, history, cfg)
     write_outputs(args.out_dir, decision, history)
 
-    print(f"[extras_health] decision={decision.decision} "
-          f"warn={len(decision.warnings)} crit={len(decision.criticals)} "
-          f"actions={decision.actions}")
+    print(
+        f"[extras_health] decision={decision.decision} "
+        f"warn={len(decision.warnings)} crit={len(decision.criticals)} "
+        f"actions={decision.actions}"
+    )
     # 退出码：critical=2（供 workflow 区分告警级别，不影响非阻塞语义）
     return 2 if decision.decision == "critical" else 0
 

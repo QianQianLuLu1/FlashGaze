@@ -145,9 +145,7 @@ def test_readonly_target_posix_replaced_in_place(tmp_path: Path) -> None:
     assert _mode_of(target) == 0o444
 
 
-def test_chmod_failure_still_writes(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_chmod_failure_still_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """M-1：chmod 失败为 best-effort（与 chown 对称）——不阻断落盘、无 .tmp 残留。"""
 
     def _boom(*args: object, **kwargs: object) -> None:

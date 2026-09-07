@@ -103,9 +103,7 @@ def _cmd_score(clp: CLIParser, ns: argparse.Namespace, logger: logging.Logger) -
         logger.error("--output 需搭配 --json（仅提供路径不会启用 JSON 输出）；已中止，未进行评分")
         return ExitCode.PARAM_ERROR
     if config.csv_output_path and not config.output_csv:
-        logger.error(
-            "--csv-output 需搭配 --csv（仅提供路径不会启用 CSV 输出）；已中止，未进行评分"
-        )
+        logger.error("--csv-output 需搭配 --csv（仅提供路径不会启用 CSV 输出）；已中止，未进行评分")
         return ExitCode.PARAM_ERROR
     if config.xlsx_output_path and not config.output_xlsx:
         logger.error(
@@ -356,9 +354,7 @@ def _cmd_cleanup(clp: CLIParser, ns: argparse.Namespace, logger: logging.Logger)
     # 无法感知报告从未产出。在 run_cleanup 之前拒绝，零评分算力、零删除副作用
     # （与下方 LOW-1(cleanup) / H-2 同纪律；不基于 config 判定的原因见下）。
     if getattr(ns, "output_path", None) and not getattr(ns, "output_json", False):
-        logger.error(
-            "--output 需搭配 --json（cleanup 报告仅在 --json 下落盘）；已中止，未执行清理"
-        )
+        logger.error("--output 需搭配 --json（cleanup 报告仅在 --json 下落盘）；已中止，未执行清理")
         return ExitCode.PARAM_ERROR
 
     # LOW-1(cleanup): 报告输出路径越界校验前置到 run_cleanup 之前——原校验只在

@@ -48,8 +48,7 @@ def test_make_scorer_qwen_private_rejected_by_default(
         _fake_getaddrinfo(["10.0.0.1"]),
     )
     cfg = Config(
-        directory=".",
-        api_key="k", api_base="http://10.0.0.1", model="m", vlm_provider="qwen"
+        directory=".", api_key="k", api_base="http://10.0.0.1", model="m", vlm_provider="qwen"
     )
     with pytest.raises(ValueError):
         make_scorer(cfg)

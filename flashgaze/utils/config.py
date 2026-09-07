@@ -674,9 +674,7 @@ def _clamp_vlm_breaker_threshold(base: dict[str, Any]) -> None:
         )
         val = DEFAULT_VLM_BREAKER_THRESHOLD
     if val < 0:
-        logger.warning(
-            "vlm_breaker_threshold=%s 为负，已钳制到 0（关闭熔断）", val
-        )
+        logger.warning("vlm_breaker_threshold=%s 为负，已钳制到 0（关闭熔断）", val)
         val = 0
     base["vlm_breaker_threshold"] = val
 

@@ -244,7 +244,7 @@ def test_parse_retry_after_boundary_61_clamped() -> None:
 def test_parse_retry_after_http_date_branch_unchanged() -> None:
     """日期分支行为不变（已 min(diff, 60.0)），且不超 60。"""
     # 未来 120s 的 HTTP 日期应被钳制到 60.0
-    future = (datetime.now(timezone.utc).timestamp() + 120)
+    future = datetime.now(timezone.utc).timestamp() + 120
     from email.utils import formatdate
 
     dt_header = formatdate(timeval=future, usegmt=True)
@@ -272,9 +272,7 @@ def test_4xx_does_not_retry(sharp_img: str, monkeypatch: pytest.MonkeyPatch) -> 
     assert calls["n"] == 1  # 未重试
 
 
-def test_5xx_retries_then_success(
-    sharp_img: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_5xx_retries_then_success(sharp_img: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """瞬时 5xx（503）有限重试：前两次 503，第三次 200 成功。"""
     calls = {"n": 0}
 
@@ -336,7 +334,8 @@ def test_parse_json_wrapped_in_code_fence(sharp_img: str, monkeypatch: pytest.Mo
     """```json 围栏包裹的 JSON 必须能解析——这是场景补偿失效的根因。"""
     content = '```json\n{"quality":80,"adjustment":5,"reason":"清晰"}\n```'
     monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", lambda *a, **kw: _raw_content_response(content)
+        "flashgaze.core.vlm_client.requests.Session.post",
+        lambda *a, **kw: _raw_content_response(content),
     )
     client = VLMClient(api_key="k", api_base="http://x", model="m")
     result = client.judge(sharp_img, _make_cv())
@@ -351,7 +350,8 @@ def test_parse_bare_code_fence_without_language(
     """无语言标记的 ``` 围栏同样要能解析。"""
     content = '```\n{"adjustment": -3, "reason": "过曝"}\n```'
     monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", lambda *a, **kw: _raw_content_response(content)
+        "flashgaze.core.vlm_client.requests.Session.post",
+        lambda *a, **kw: _raw_content_response(content),
     )
     client = VLMClient(api_key="k", api_base="http://x", model="m")
     result = client.judge(sharp_img, _make_cv())
@@ -363,7 +363,8 @@ def test_parse_json_with_trailing_comma(sharp_img: str, monkeypatch: pytest.Monk
     """尾逗号（模型高频笔误）不应导致解析失败。"""
     content = '{"adjustment": 4, "reason": "暗调氛围",}'
     monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", lambda *a, **kw: _raw_content_response(content)
+        "flashgaze.core.vlm_client.requests.Session.post",
+        lambda *a, **kw: _raw_content_response(content),
     )
     client = VLMClient(api_key="k", api_base="http://x", model="m")
     result = client.judge(sharp_img, _make_cv())
@@ -378,7 +379,8 @@ def test_parse_fenced_json_with_trailing_comma(
     """围栏 + 尾逗号组合（真实模型输出最常见形态）。"""
     content = '```json\n{\n  "adjustment": 6,\n  "reason": "背景虚化",\n}\n```'
     monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", lambda *a, **kw: _raw_content_response(content)
+        "flashgaze.core.vlm_client.requests.Session.post",
+        lambda *a, **kw: _raw_content_response(content),
     )
     client = VLMClient(api_key="k", api_base="http://x", model="m")
     result = client.judge(sharp_img, _make_cv())
@@ -714,9 +716,7 @@ def test_reresolve_on_conn_error_threshold_then_recovers(
     )
     monkeypatch.setattr("flashgaze.core.vlm_client.time.sleep", lambda s: None)
 
-    client = VLMClient(
-        api_key="k", api_base="http://example.com", model="m", max_retries=3
-    )
+    client = VLMClient(api_key="k", api_base="http://example.com", model="m", max_retries=3)
     r1 = client.judge(sharp_img, _make_cv())
     assert r1.ok is False
     # 连续失败达默认阈值（=max_retries）后触发了重解析
@@ -753,9 +753,7 @@ def test_reresolve_keeps_old_pool_when_restricted(
     )
     monkeypatch.setattr("flashgaze.core.vlm_client.time.sleep", lambda s: None)
 
-    client = VLMClient(
-        api_key="k", api_base="http://example.com", model="m", max_retries=3
-    )
+    client = VLMClient(api_key="k", api_base="http://example.com", model="m", max_retries=3)
     r = client.judge(sharp_img, _make_cv())
     assert r.ok is False
     # 重解析被安全校验拒绝，候选池保持原公网 IP，未被替换为内网地址
@@ -1013,9 +1011,7 @@ def _anthropic_ok_response(adjustment: float, reason: str = "ok") -> Any:
     return resp
 
 
-def test_openai_provider_pinned_direct(
-    sharp_img: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_openai_provider_pinned_direct(sharp_img: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """provider=openai 默认走 pin-IP 直连：URL 直连 pin 的 IP、Host 头保留原主机名、禁重定向。"""
     captured: dict[str, Any] = {}
 
@@ -1026,9 +1022,7 @@ def test_openai_provider_pinned_direct(
         captured["auth"] = kw.get("headers", {}).get("Authorization")
         return _ok_response(1.5, "曝光准确")
 
-    monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", fake_post
-    )
+    monkeypatch.setattr("flashgaze.core.vlm_client.requests.Session.post", fake_post)
     client = VLMClient(
         api_key="k",
         api_base="https://api.openai.com/v1",
@@ -1056,9 +1050,7 @@ def test_ollama_provider_pinned_direct_path(
         captured["url"] = a[1] if len(a) > 1 else kw.get("url")
         return _ok_response(0.0, "ok")
 
-    monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", fake_post
-    )
+    monkeypatch.setattr("flashgaze.core.vlm_client.requests.Session.post", fake_post)
     client = VLMClient(
         api_key="ollama",
         api_base="http://localhost:11434",
@@ -1081,9 +1073,7 @@ def test_anthropic_provider_pinned_endpoint_and_auth(
         captured["headers"] = kw.get("headers", {})
         return _anthropic_ok_response(-1.0, "逆光剪影")
 
-    monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", fake_post
-    )
+    monkeypatch.setattr("flashgaze.core.vlm_client.requests.Session.post", fake_post)
     client = VLMClient(
         api_key="sk-ant-xxx",
         api_base="https://api.anthropic.com",
@@ -1146,9 +1136,7 @@ def test_non_qwen_dns_rebinding_pinned_to_public_ip(
         assert "internal.example.com" not in (url or "")
         return _ok_response(0.0, "ok")
 
-    monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", fake_post
-    )
+    monkeypatch.setattr("flashgaze.core.vlm_client.requests.Session.post", fake_post)
     client = VLMClient(
         api_key="k",
         api_base="http://internal.example.com",
@@ -1721,9 +1709,7 @@ def test_concurrent_dns_resolution_not_serialized_by_lock(
     monkeypatch.setattr("flashgaze.core.vlm_client.time.sleep", lambda s: None)
 
     # 构造期也会触发一次慢速解析，先于计时完成，避免计入并发阶段
-    client = VLMClient(
-        api_key="k", api_base="http://example.com", model="m", max_retries=1
-    )
+    client = VLMClient(api_key="k", api_base="http://example.com", model="m", max_retries=1)
 
     def worker(_: int) -> bool:
         return client.judge(sharp_img, _make_cv()).ok
@@ -1753,9 +1739,7 @@ def test_session_per_thread_isolated(monkeypatch: pytest.MonkeyPatch) -> None:
         "flashgaze.core.vlm_client.socket.getaddrinfo",
         lambda *a, **kw: _fake_getaddrinfo(["1.1.1.1"]),
     )
-    client = VLMClient(
-        api_key="k", api_base="https://dashscope.aliyuncs.com", model="m"
-    )
+    client = VLMClient(api_key="k", api_base="https://dashscope.aliyuncs.com", model="m")
 
     # 用显式 Thread 确保 N 个真正不同的线程，各自持有独立 threading.local 槽位
     # （ThreadPoolExecutor.map 可能复用同一线程，无法稳定触发隔离语义）。
@@ -1781,9 +1765,7 @@ def test_session_per_thread_isolated(monkeypatch: pytest.MonkeyPatch) -> None:
     # 每个都是真实 requests.Session
     assert all(isinstance(s, requests.Session) for s in sessions)
     # 有 host 时每个 Session 都挂了 pin 适配器（HTTPS 语义保持）
-    assert all(
-        isinstance(s.get_adapter("https://"), _PinnedIPAdapter) for s in sessions
-    )
+    assert all(isinstance(s.get_adapter("https://"), _PinnedIPAdapter) for s in sessions)
     # 同一线程复用同一实例：主线程再取一次不与任何 worker 实例相同（主线程独立）
     assert client._get_session() is not sessions[0]
 
@@ -1963,9 +1945,7 @@ def test_degrade_empty_choices(sharp_img: str, monkeypatch: pytest.MonkeyPatch) 
     resp.headers = {}
     resp.raise_for_status.return_value = None
     resp.json.return_value = {"choices": []}
-    monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", lambda *a, **kw: resp
-    )
+    monkeypatch.setattr("flashgaze.core.vlm_client.requests.Session.post", lambda *a, **kw: resp)
     client = VLMClient(api_key="k", api_base="http://x", model="m")
     result = client.judge(sharp_img, _make_cv())  # 不抛异常即为通过
     assert result.ok is False
@@ -1979,9 +1959,7 @@ def test_degrade_null_message(sharp_img: str, monkeypatch: pytest.MonkeyPatch) -
     resp.headers = {}
     resp.raise_for_status.return_value = None
     resp.json.return_value = {"choices": [{"message": None}]}
-    monkeypatch.setattr(
-        "flashgaze.core.vlm_client.requests.Session.post", lambda *a, **kw: resp
-    )
+    monkeypatch.setattr("flashgaze.core.vlm_client.requests.Session.post", lambda *a, **kw: resp)
     client = VLMClient(api_key="k", api_base="http://x", model="m")
     result = client.judge(sharp_img, _make_cv())  # 不抛异常即为通过
     assert result.ok is False
@@ -2047,9 +2025,7 @@ def test_parse_reason_lone_surrogate_sanitized(
     # JSON 文本中的 \ud83d 转义（缺少低代理）会被 json/json5 解析成孤立代理字符
     monkeypatch.setattr(
         "flashgaze.core.vlm_client.requests.Session.post",
-        lambda *a, **kw: _raw_content_response(
-            '{"adjustment": 2, "reason": "虚化\\ud83d"}'
-        ),
+        lambda *a, **kw: _raw_content_response('{"adjustment": 2, "reason": "虚化\\ud83d"}'),
     )
     client = VLMClient(api_key="k", api_base="http://x", model="m")
     result = client.judge(sharp_img, _make_cv())
@@ -2100,9 +2076,7 @@ def test_breaker_trips_after_consecutive_failures(
     assert calls["n"] == 15  # 未再发起网络请求
 
 
-def test_breaker_streak_resets_on_success(
-    sharp_img: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_breaker_streak_resets_on_success(sharp_img: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """任一成功即复位连续计数：4 败 1 成功 4 败不触发熔断。"""
     calls = {"n": 0}
     script = ["fail", "fail", "fail", "fail", "ok"]  # 每张图一个结果（max_retries=1）
@@ -2184,9 +2158,7 @@ def test_breaker_rate_guard_trips_on_high_failure_rate(
     assert calls["n"] == 20
 
 
-def test_breaker_early_exit_in_retry_loop(
-    sharp_img: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_breaker_early_exit_in_retry_loop(sharp_img: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """在途图在重试间隙感知熔断：不再烧满剩余重试预算。"""
     calls = {"n": 0}
 
@@ -2223,9 +2195,7 @@ def test_breaker_ignores_unsupported_provider(sharp_img: str) -> None:
     assert not client._is_breaker_open()
 
 
-def test_breaker_ignores_encode_failure(
-    sharp_img: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_breaker_ignores_encode_failure(sharp_img: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """预检失败（图片编码失败）不计入熔断统计，且不污染后续正常请求路径。"""
     calls = {"n": 0}
 
@@ -2389,9 +2359,7 @@ def test_effective_sampling_params_min_temperature_lifts_zero(
     assert effective_sampling_params("qwen", 0.0, None) == {"temperature": 0.05}
 
 
-def test_litellm_kwargs_carry_sampling(
-    sharp_img: str, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_litellm_kwargs_carry_sampling(sharp_img: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """use_litellm=True 时 temperature/seed 透传给 litellm.completion。"""
     captured: dict[str, Any] = {}
 

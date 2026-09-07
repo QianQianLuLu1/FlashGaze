@@ -134,11 +134,15 @@ def batch_full_dir(bench_root: Path) -> str:
             # 不在仓库根运行时回退到源码相对路径导入
             sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
             from tools.bench.make_images import generate
-        print(f"[batch_full] tools/bench/images 缺失，兜底生成 {BATCH_FULL_COUNT} "
-              f"张 {LARGE_WIDTH}x{LARGE_HEIGHT} 基准图（约 10-20 秒）...")
+        print(
+            f"[batch_full] tools/bench/images 缺失，兜底生成 {BATCH_FULL_COUNT} "
+            f"张 {LARGE_WIDTH}x{LARGE_HEIGHT} 基准图（约 10-20 秒）..."
+        )
         generate(images_dir)
     else:
-        print(f"[batch_full] 复用缓存的 tools/bench/images（{len(list(images_dir.glob('img_*.jpg')))} 张）")
+        print(
+            f"[batch_full] 复用缓存的 tools/bench/images（{len(list(images_dir.glob('img_*.jpg')))} 张）"
+        )
     return str(images_dir)
 
 

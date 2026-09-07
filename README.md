@@ -572,7 +572,7 @@ The default run carries a baked-in filter (`pyproject.toml` `[tool.pytest.ini_op
 
 1080 tests collected by default (measured with all safe extras installed: 1052 passed / 28 skipped; the 10 browser-E2E tests are deselected by the default filter; WebUI layers auto-skip where gradio is absent) covering CV engine, VLM client, hybrid scorer, exporter, CLI parser, end-to-end flows, reproducibility, config layers, and the three-layer Web GUI coverage below.
 
-Coverage gate: total coverage must stay ≥ 80% (configured in `.coveragerc`, enforced by the same `pytest --cov` run locally and in CI). `mcp_server` and `webui/app` are inside the gate — the main CI matrix installs the `mcp` extra so their tests run there. The three dependency-heavy optional modules (`xlsx_exporter`, `deduplicator`, `portrait_engine`) are excluded from the main gate and enforced by the CI `extras` job instead (`.coveragerc-extras`: unconditional hard floor of 50% overall plus per-module floors in `ci.yml`; see `docs/extras-governance.md`).
+Coverage gate: total coverage must stay ≥ 80% (configured in `.coveragerc`, enforced by the same `pytest --cov` run locally and in CI). `mcp_server`, `webui/app`, and `exif_writer` are inside the gate — the main CI matrix installs the lightweight `mcp,gui,exif,heic` extras so their tests run there (without them the gate measures skipped tests: 79.31% in practice). The three dependency-heavy optional modules (`xlsx_exporter`, `deduplicator`, `portrait_engine`) are excluded from the main gate and enforced by the CI `extras` job instead (`.coveragerc-extras`: unconditional hard floor of 50% overall plus per-module floors in `ci.yml`; see `docs/extras-governance.md`).
 
 ### Web GUI test layers
 
@@ -1241,7 +1241,7 @@ pytest tests/ -v --cov=flashgaze --cov-report=term-missing
 
 默认口径下共收集 1080 项测试（装齐安全 extras 时实测 1052 通过 / 28 跳过，10 项浏览器 E2E 被默认过滤取消选择；gradio 缺失的环境 WebUI 各层自动跳过），覆盖 CV 引擎、VLM 客户端、混合评分器、导出器、CLI 解析器、端到端流程、可复现性、配置层，以及下述 Web GUI 三层覆盖。
 
-覆盖率门禁：总覆盖率须 ≥ 80%（配置在 `.coveragerc`，本地与 CI 的同一条 `pytest --cov` 命令都会强制执行）。`mcp_server` 与 `webui/app` 已纳入门槛——CI 主矩阵加装 `mcp` extra 使其测试在主矩阵激活。三个重依赖可选模块（`xlsx_exporter`、`deduplicator`、`portrait_engine`）不纳入主门槛，由 CI 的 `extras` job 硬门槛强制（`.coveragerc-extras`：无条件总下限 50% + `ci.yml` 逐模块下限；见 `docs/extras-governance.md`）。
+覆盖率门禁：总覆盖率须 ≥ 80%（配置在 `.coveragerc`，本地与 CI 的同一条 `pytest --cov` 命令都会强制执行）。`mcp_server`、`webui/app` 与 `exif_writer` 已纳入门槛——CI 主矩阵加装 `mcp,gui,exif,heic` 轻量 extras 使其测试在主矩阵真实执行（缺依赖时对应测试跳过、门禁失真，实测仅装 `mcp` 时总覆盖率 79.31% 不达标）。三个重依赖可选模块（`xlsx_exporter`、`deduplicator`、`portrait_engine`）不纳入主门槛，由 CI 的 `extras` job 硬门槛强制（`.coveragerc-extras`：无条件总下限 50% + `ci.yml` 逐模块下限；见 `docs/extras-governance.md`）。
 
 ### Web GUI 测试分层
 

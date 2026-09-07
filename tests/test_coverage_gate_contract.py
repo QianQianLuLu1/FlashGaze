@@ -8,10 +8,10 @@
 - ``.coveragerc-extras``：extras job 必须有硬门槛 ``fail_under >= 50``，
   且 source 覆盖全部 5 个可选模块（tools/extras_health.py 的 MODULES 与
   夜间 extras-health 任务依赖该 source 清单）。
-- ``.github/workflows/ci.yml``：test job 安装 mcp extra（mcp_server 才能在
-  主矩阵被度量）；extras job 不得有 job 级 ``continue-on-error``（否则门禁
-  失败被吞掉，回到「只报告不设门」）；覆盖率硬门禁步骤必须存在且无条件
-  执行（不受 sentinel 锁条件化）。
+- ``.github/workflows/ci.yml``：test job 安装 mcp/gui/exif/heic 轻量 extras
+  （纳入主门禁的模块才能在主矩阵被真实度量）；extras job 不得有 job 级
+  ``continue-on-error``（否则门禁失败被吞掉，回到「只报告不设门」）；
+  覆盖率硬门禁步骤必须存在且无条件执行（不受 sentinel 锁条件化）。
 - ``codecov.yml``：patch/core 强制状态不得再排除 mcp_server / webui.app。
 
 改门槛、改 omit、改 CI 门禁结构时，必须同步更新本测试与 README
@@ -76,6 +76,11 @@ EXTRAS_SOURCE_MODULES = {
     "flashgaze.core.deduplicator",
     "flashgaze.core.portrait_engine",
 }
+
+# 主 test 矩阵必须安装的轻量 extras（2026-09 扩围：webui/app、exif_writer
+# 纳入主门禁后，其运行依赖也须进主矩阵，否则对应测试跳过、门禁失真；
+# heic 使 HEIC 格式矩阵用例真实执行而非跳过）。
+REQUIRED_TEST_EXTRAS = {"mcp", "gui", "exif", "heic"}
 
 
 def _read_rc(path: Path) -> configparser.ConfigParser:
@@ -152,12 +157,23 @@ def test_extras_rc_source_covers_five_modules() -> None:
 # ── .github/workflows/ci.yml ─────────────────────────────────────────
 
 
-def test_ci_test_job_installs_mcp_extra() -> None:
-    """主 test 矩阵必须安装 mcp extra，否则 mcp_server 测试全跳过、门禁度量失真。"""
+def test_ci_test_job_installs_required_extras() -> None:
+    """主 test 矩阵必须安装 mcp/gui/exif/heic extras，纳入 80% 门禁的模块才能真实执行。
+
+    缺 mcp → mcp_server 覆盖率 0；缺 gui → webui/app 组件测试全跳过（~22%）；
+    缺 exif → exif_writer 0%。任缺其一，主门禁必然失真甚至直接失守
+    （2026-09 实测：仅装 mcp 时总覆盖率 79.31% < 80）。
+    """
     test_job = _job_section(_read_text(CI_YML), "  test:", "  typecheck:")
-    assert 'pip install -e ".[mcp]' in test_job, (
-        'ci.yml test job 的安装命令缺少 mcp extra（期望形如 pip install -e ".[mcp]"）；'
-        "不装 mcp 时 mcp_server 覆盖率为 0，主 80% 门禁必然失真"
+    match = re.search(r'pip install -e "\.\[([^"]+)\]"', test_job)
+    assert match is not None, 'ci.yml test job 缺少 pip install -e ".[...]" 安装命令'
+    installed = {x.strip() for x in match.group(1).split(",")}
+    missing = REQUIRED_TEST_EXTRAS - installed
+    assert not missing, (
+        f"ci.yml test job 安装命令缺少 extras {sorted(missing)}："
+        "对应模块测试跳过（mcp_server/webui/app/exif_writer 覆盖率塌方），"
+        "主 80% 门禁必然失真；新增 extras 需同步更新本测试与"
+        "README 覆盖率门禁小节、docs/extras-governance.md 口径"
     )
     assert "--cov-config=.coveragerc-extras" not in test_job, (
         "test job 必须使用主 .coveragerc（extras 配置仅限 extras job）"

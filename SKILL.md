@@ -178,9 +178,7 @@ cleanup_workspace_images(workspace="C:/my-photos", top=30, scored=prior_scores)
 # 显式信任复用（需要与先前评分报告保持决策一致时）：
 # → summary.scored_source == "caller"；scored 中分数须为有限值且落在 [0, 100]，
 #   任一违反整体拒绝执行（code=4），不会静默钳制
-cleanup_workspace_images(
-    workspace="C:/my-photos", top=30, scored=prior_scores, trust_scored=True
-)
+cleanup_workspace_images(workspace="C:/my-photos", top=30, scored=prior_scores, trust_scored=True)
 ```
 
 实际口径始终以 `summary.scored_source` 透明标注：`engine`（全量重算）/ `caller`（信任复用）/ `engine_with_caller_errors`（仅复用损坏标记）。

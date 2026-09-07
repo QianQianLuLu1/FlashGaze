@@ -45,7 +45,9 @@ GALLERY_ITEMS = 3  # 损坏图解码失败，不进画廊
 
 
 def _status_value(page: Page, selector: str) -> str:
-    return page.locator(selector).first.input_value()
+    # 最小环境（typecheck）缺 playwright 时 Page 为 Any，str() 收敛回 str；
+    # 真实 playwright 的 input_value() 本就返回 str，此处为幂等包装
+    return str(page.locator(selector).first.input_value())
 
 
 def _wait_status(page: Page, selector: str, fragment: str, timeout: int = 60000) -> None:
@@ -215,9 +217,7 @@ def test_filter_refreshes_table_and_gallery(scored_page: Page, e2e_photo_dir: Pa
 # ── E9 导出交互 ──────────────────────────────────────────────
 
 
-def test_export_copies_selected_images(
-    scored_page: Page, e2e_photo_dir: Path
-) -> None:
+def test_export_copies_selected_images(scored_page: Page, e2e_photo_dir: Path) -> None:
     """复制/移动高分图：入选文件落到导出目录，未入选与损坏图不导出。
 
     安全加固后导出目标必须落在被评分的 workspace 内（越界硬拒绝），

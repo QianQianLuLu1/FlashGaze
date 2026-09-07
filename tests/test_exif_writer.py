@@ -397,7 +397,10 @@ def test_backup_failure_aborts_write(
 
 
 def test_insert_failure_keeps_original(
-    fixtures_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    fixtures_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """piexif.insert 失败时：原图不损坏，且 .bak.<pid> 回滚点保留为写入前字节、
     记 WARNING 含恢复路径（C-01 加固）。"""
@@ -606,13 +609,15 @@ def test_xmp_iptc_preserved_after_write(fixtures_dir: Path, tmp_path: Path) -> N
     # 全部 APP 段保留：XMP 与 IPTC 仍在
     segs = _split_jpeg_segments(Path(path).read_bytes())
     assert any(_XMP_NS in s for s in segs)
-    assert any(s[0:2] == b"\xff\xed" and s[4:4 + 13] == b"Photoshop 3.0" for s in segs)
+    assert any(s[0:2] == b"\xff\xed" and s[4 : 4 + 13] == b"Photoshop 3.0" for s in segs)
     # 无重复 Exif APP1
     exif_app1 = [s for s in segs if s[0:2] == b"\xff\xe1" and s[4:10] == b"Exif\x00\x00"]
     assert len(exif_app1) == 1
 
 
-def test_xmp_iptc_warning_logged(fixtures_dir: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_xmp_iptc_warning_logged(
+    fixtures_dir: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     """M2：检测到 XMP/IPTC 时记录 WARNING 审计（默认仍保留并写入）。"""
     path = _copy_fixture(fixtures_dir, tmp_path, "sharp.jpg")
     _inject_xmp_iptc(Path(path))
@@ -763,9 +768,7 @@ def _count_webp_chunks(webp_bytes: bytes, fourcc: bytes) -> int:
     return count
 
 
-def test_webp_preserves_xmp_after_exif_write(
-    fixtures_dir: Path, tmp_path: Path
-) -> None:
+def test_webp_preserves_xmp_after_exif_write(fixtures_dir: Path, tmp_path: Path) -> None:
     """回归：含 XMP sidecar 的 WebP 经 EXIF 写回后 XMP 仍须保留（数据完整性，Medium）。
 
     工作记忆记载 WebP 路径"piexif.insert 经 split/merge_chunks 已安全保留
@@ -777,9 +780,7 @@ def test_webp_preserves_xmp_after_exif_write(
     _inject_webp_xmp(Path(path))
     # 起点断言：注入后确实含 XMP chunk（否则测试失去意义）
     _raw = Path(path).read_bytes()
-    assert any(
-        _raw[i : i + 4] == b"XMP " for i in range(12, len(_raw) - 8)
-    ), "注入 XMP chunk 失败"
+    assert any(_raw[i : i + 4] == b"XMP " for i in range(12, len(_raw) - 8)), "注入 XMP chunk 失败"
 
     scored = _score(path, vlm_reason="good", vlm_provider="qwen")
     result = ExifWriter(preserve_original=False).write_one(scored)
@@ -805,9 +806,7 @@ def test_webp_preserves_xmp_after_exif_write(
     assert _count_webp_chunks(out, b"EXIF") == 1, "WebP 写回后 EXIF chunk 数量异常"
 
 
-def test_webp_no_duplicate_sidecar_chunks(
-    fixtures_dir: Path, tmp_path: Path
-) -> None:
+def test_webp_no_duplicate_sidecar_chunks(fixtures_dir: Path, tmp_path: Path) -> None:
     """回归（本次 bug 修复）：含 XMP + ICCP 的 WebP 经 EXIF 写回后，XMP / ICCP /
     EXIF 各至多（且恰好）一个 chunk，不得因 sidecar 重挂产生重复（元数据损坏）。
 

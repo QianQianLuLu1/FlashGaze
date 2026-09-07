@@ -79,12 +79,12 @@ def _split_jpeg_segments(data: bytes) -> list[bytes]:
     segments = [b"\xff\xd8"]
     n = len(data)
     while head < n:
-        if data[head:head + 2] == b"\xff\xda":  # SOS：剩余全部作为扫描数据段
+        if data[head : head + 2] == b"\xff\xda":  # SOS：剩余全部作为扫描数据段
             segments.append(data[head:])
             break
         if head + 4 > n:
             raise ValueError("Truncated JPEG segment header")
-        length = struct.unpack(">H", data[head + 2:head + 4])[0]
+        length = struct.unpack(">H", data[head + 2 : head + 4])[0]
         if length < 2:
             raise ValueError("Invalid JPEG segment length")
         end = head + length + 2
@@ -106,10 +106,7 @@ def _insert_exif_jpeg(jpeg_bytes: bytes, exif_bytes: bytes) -> bytes:
     if exif_bytes[0:6] != b"Exif\x00\x00":
         raise ValueError("Given data is not exif data (missing 'Exif\\x00\\x00' header)")
     segments = _split_jpeg_segments(jpeg_bytes)
-    kept = [
-        s for s in segments
-        if not (s[0:2] == b"\xff\xe1" and s[4:10] == b"Exif\x00\x00")
-    ]
+    kept = [s for s in segments if not (s[0:2] == b"\xff\xe1" and s[4:10] == b"Exif\x00\x00")]
     exif_app1 = b"\xff\xe1" + struct.pack(">H", len(exif_bytes) + 2) + exif_bytes
     kept.insert(1, exif_app1)  # 紧跟 SOI 之后
     return b"".join(kept)
@@ -280,7 +277,7 @@ def _detect_sidecar_segments(jpeg_bytes: bytes) -> set[str]:
     for s in segments:
         if s[0:2] == b"\xff\xe1" and b"http://ns.adobe.com/xap/1.0/" in s:
             found.add("xmp")
-        elif s[0:2] == b"\xff\xed" and s[4:4 + 13] == b"Photoshop 3.0":
+        elif s[0:2] == b"\xff\xed" and s[4 : 4 + 13] == b"Photoshop 3.0":
             found.add("iptc")
     return found
 
@@ -382,8 +379,7 @@ class ExifWriter:
                     sidecars = _detect_webp_sidecar_segments(tmp_bytes)
                     if sidecars:
                         logger.warning(
-                            "图片含 sidecar 元数据(%s)，已保留全部 chunk 写入 "
-                            "FlashGaze EXIF: %s",
+                            "图片含 sidecar 元数据(%s)，已保留全部 chunk 写入 FlashGaze EXIF: %s",
                             ",".join(sorted(sidecars)),
                             path,
                         )
@@ -394,8 +390,7 @@ class ExifWriter:
                     sidecars = _detect_sidecar_segments(tmp_bytes)
                     if sidecars:
                         logger.warning(
-                            "图片含 sidecar 元数据(%s)，已保留全部 APP 段写入 "
-                            "FlashGaze EXIF: %s",
+                            "图片含 sidecar 元数据(%s)，已保留全部 APP 段写入 FlashGaze EXIF: %s",
                             ",".join(sorted(sidecars)),
                             path,
                         )

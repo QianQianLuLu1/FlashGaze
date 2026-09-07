@@ -372,10 +372,9 @@ def sampling_params_for_config(config: Config) -> dict[str, Any] | None:
     """
     if config.no_vlm or not config.api_key:
         return None
-    params = effective_sampling_params(
-        config.vlm_provider, config.vlm_temperature, config.vlm_seed
-    )
+    params = effective_sampling_params(config.vlm_provider, config.vlm_temperature, config.vlm_seed)
     return {"provider": config.vlm_provider, **params}
+
 
 # FIX(H-5): 与 pin-IP 直连互斥的环境变量（按大写名匹配，Windows/Linux 大小写
 # 变体一并覆盖）。这些变量存在时 trust_env 已关闭，它们不会被读取——此处仅用于
@@ -905,11 +904,7 @@ class VLMClient:
                     # 200 + 非 dict JSON（数组/字符串等）无法进入 _parse_response，按降级处理
                     if not isinstance(data, dict):
                         return None
-                    return (
-                        _normalize_anthropic_response(data)
-                        if spec.is_anthropic
-                        else data
-                    )
+                    return _normalize_anthropic_response(data) if spec.is_anthropic else data
                 finally:
                     # FIX(#5-2): 无论哪条分支返回/异常，都释放响应连接回池，
                     # 避免 429/5xx/HTTPError 分支直接丢弃响应导致连接泄漏。

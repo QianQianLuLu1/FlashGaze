@@ -301,9 +301,7 @@ def score_images(
     # extra 不并入，报告结构与既有契约一致）
     sampling = sampling_params_for_config(config)
     extra = {"vlm_sampling": sampling} if sampling is not None else None
-    return _build_report(
-        scored, elapsed_ms, extra=extra, phase1_stats=scorer.phase1_stats
-    )
+    return _build_report(scored, elapsed_ms, extra=extra, phase1_stats=scorer.phase1_stats)
 
 
 @mcp.tool()

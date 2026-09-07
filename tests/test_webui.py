@@ -227,7 +227,9 @@ def test_run_scoring_passes_exclude_dirs(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.setattr(
         "flashgaze.webui.runner.iter_images",
         # dict.update 返回 None → `or []` 恒返回空列表，避免把记录元组当图片列表下传
-        lambda directory, recursive=True, exclude_dirs=(): calls.update(args=(directory, exclude_dirs)) or [],
+        lambda directory, recursive=True, exclude_dirs=(): (
+            calls.update(args=(directory, exclude_dirs)) or []
+        ),
     )
 
     ws = tmp_path / "ws"

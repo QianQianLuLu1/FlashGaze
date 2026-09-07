@@ -94,9 +94,7 @@ class CLIParser:
         cleanup_sp = sub.add_parser("cleanup", help="工作空间清理：评分后原地删除低分图")
         self._add_cleanup_args(cleanup_sp)
 
-        restore_sp = sub.add_parser(
-            "restore", help="按删除审计清单把回收站文件恢复到原路径"
-        )
+        restore_sp = sub.add_parser("restore", help="按删除审计清单把回收站文件恢复到原路径")
         self._add_restore_args(restore_sp)
 
         return p
@@ -235,7 +233,9 @@ class CLIParser:
         p.add_argument(
             "--csv", dest="output_csv", action="store_true", default=None, help="输出 CSV 清单"
         )
-        p.add_argument("--output", dest="output_path", default=None, help="JSON 清单输出路径（需搭配 --json）")
+        p.add_argument(
+            "--output", dest="output_path", default=None, help="JSON 清单输出路径（需搭配 --json）"
+        )
         p.add_argument(
             "--csv-output",
             dest="csv_output_path",
@@ -339,7 +339,9 @@ class CLIParser:
             default=None,
             help="结构化输出到 stdout（供 Agent）",
         )
-        p.add_argument("--output", dest="output_path", default=None, help="报告写入文件（需搭配 --json）")
+        p.add_argument(
+            "--output", dest="output_path", default=None, help="报告写入文件（需搭配 --json）"
+        )
         p.add_argument("--verbose", action="store_true", default=None, help="详细日志（stderr）")
         p.add_argument("--version", action="version", version=f"flashgaze {__version__}")
 

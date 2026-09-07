@@ -40,9 +40,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # mcp extra 使 mcp_server 可在主矩阵导入：其测试激活后才能被
-          # fail_under=80 的门禁真实度量（M-12 修复）；webui/app 无需重依赖。
-          pip install -e ".[mcp]"
+          # 主矩阵加装 4 个轻量 extras，使纳入 fail_under=80 门禁的模块真实执行：
+          # mcp（mcp_server，M-12）、gui（webui/app 组件测试，2026-09 扩围）、
+          # exif（exif_writer）、heic（HEIC 解码——固件随仓库分发，但解码必须
+          # pillow-heif，缺失时用例优雅跳过）。重依赖模块（xlsx/dedup/portrait）
+          # 仍由 .coveragerc omit，交 extras job 硬门槛度量。
+          pip install -e ".[mcp,gui,exif,heic]"
           pip install -r requirements-dev.txt
 
       # 覆盖率门槛（fail_under = 80）来自 .coveragerc：pytest-cov 在总覆盖率
@@ -105,9 +108,11 @@ jobs:
           python-version: "3.13"
           cache: 'pip'
 
-      # 只装基础依赖：可选 extras（gradio/mcp/piexif 等）由 pyproject 的
-      # mypy overrides 以 ignore_missing_imports 处理，保证本地最小环境
-      # 与 CI 跑出同一份结果（检查范围由配置 files=["flashgaze"] 提供）
+      # 只装基础依赖：可选 extras（gradio/mcp/piexif 等）与 e2e 专属依赖
+      # （playwright，仅 requirements-e2e.txt）由 pyproject 的 mypy overrides
+      # 以 ignore_missing_imports 处理；@mcp.tool() 在 Any 下的 untyped-decorator
+      # 由 mcp_server 专属 override 放行。保证本地最小环境与 CI 同一结果
+      # （检查范围由配置 files=["flashgaze"] 提供）
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip

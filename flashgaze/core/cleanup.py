@@ -306,7 +306,9 @@ def classify_and_delete(
     # 缺失/不匹配时整批拦截，一张不删，全部待删项进 blocked。非 force 路径不校验——
     # 未过比例护栏的常规删除无需人工指纹确认。
     fingerprint = pending_fingerprint(s.path for s in to_delete)
-    confirm_required = not dry_run and force and (confirm_fingerprint or "").strip().lower() != fingerprint
+    confirm_required = (
+        not dry_run and force and (confirm_fingerprint or "").strip().lower() != fingerprint
+    )
     confirm_reason = ""
     if confirm_required:
         if confirm_fingerprint:

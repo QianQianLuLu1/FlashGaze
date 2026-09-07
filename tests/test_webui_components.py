@@ -568,9 +568,7 @@ def test_on_export_guards(demo: gradio.Blocks) -> None:
     )
 
 
-def test_on_export_copies_selected_images(
-    demo: gradio.Blocks, tmp_path: Path
-) -> None:
+def test_on_export_copies_selected_images(demo: gradio.Blocks, tmp_path: Path) -> None:
     """导出成功：workspace 内的入选图片被复制，非入选图片不复制。
 
     安全加固后导出目标必须落在被评分的 workspace 内（越界硬拒绝），

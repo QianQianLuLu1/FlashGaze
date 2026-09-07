@@ -838,9 +838,7 @@ def _is_public_binding(host: str | None, share: bool) -> bool:
     return h not in ("127.0.0.1", "localhost", "::1", "")
 
 
-def _compute_launch_auth(
-    host: str, share: bool, auth_arg: str | None
-) -> tuple[str, str] | None:
+def _compute_launch_auth(host: str, share: bool, auth_arg: str | None) -> tuple[str, str] | None:
     """计算 demo.launch 的 auth 参数。
 
     - 仅回环（默认 127.0.0.1）且非 --share：返回 None（本地无鉴权，向后兼容）。

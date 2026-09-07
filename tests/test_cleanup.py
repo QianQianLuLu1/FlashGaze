@@ -580,7 +580,9 @@ def test_score_images_passes_exclude_dirs(tmp_path: Path, monkeypatch: pytest.Mo
     calls: dict[str, Any] = {}
     monkeypatch.setattr(
         "flashgaze.mcp_server.iter_images",
-        lambda directory, recursive=True, exclude_dirs=(): calls.setdefault("args", (directory, exclude_dirs)) or [],
+        lambda directory, recursive=True, exclude_dirs=(): (
+            calls.setdefault("args", (directory, exclude_dirs)) or []
+        ),
     )
 
     ws = tmp_path / "ws"
@@ -605,7 +607,9 @@ def test_export_selected_images_passes_exclude_dirs(
     calls: dict[str, Any] = {}
     monkeypatch.setattr(
         "flashgaze.mcp_server.iter_images",
-        lambda directory, recursive=True, exclude_dirs=(): calls.setdefault("args", (directory, exclude_dirs)) or [],
+        lambda directory, recursive=True, exclude_dirs=(): (
+            calls.setdefault("args", (directory, exclude_dirs)) or []
+        ),
     )
 
     ws = tmp_path / "ws"
@@ -638,7 +642,9 @@ def test_cleanup_workspace_images_passes_exclude_dirs(
     calls: dict[str, Any] = {}
     monkeypatch.setattr(
         "flashgaze.mcp_server.iter_images",
-        lambda directory, recursive=True, exclude_dirs=(): calls.setdefault("args", (directory, exclude_dirs)) or [],
+        lambda directory, recursive=True, exclude_dirs=(): (
+            calls.setdefault("args", (directory, exclude_dirs)) or []
+        ),
     )
 
     ws = tmp_path / "ws"
@@ -1319,9 +1325,7 @@ def test_guard_min_sample_param_override(tmp_path: Path, fixtures_dir: Path) -> 
     assert result["summary"]["deleted"] == 0
 
 
-def test_guard_min_sample_invalid_clamped_not_disabled(
-    tmp_path: Path, fixtures_dir: Path
-) -> None:
+def test_guard_min_sample_invalid_clamped_not_disabled(tmp_path: Path, fixtures_dir: Path) -> None:
     """guard_min_sample 非法（0/负数）→ 钳到 1，绝不关闭护栏（放行走 force+指纹）。"""
     ws, paths = _mk_ws(tmp_path, fixtures_dir, 2)
     scored = _mk_scores(paths, [False] * 2, [1.0] * 2)
@@ -1332,9 +1336,7 @@ def test_guard_min_sample_invalid_clamped_not_disabled(
     assert result["summary"]["deleted"] == 0
 
 
-def test_bulk_delete_guard_not_diluted_by_unevaluated(
-    tmp_path: Path, fixtures_dir: Path
-) -> None:
+def test_bulk_delete_guard_not_diluted_by_unevaluated(tmp_path: Path, fixtures_dir: Path) -> None:
     """护栏分母用可评分图口径：损坏图不计入分母，比例不被稀释。
 
     25 图 = 20 低分（error=None）+ 5 损坏（error 非 None）：损坏图本就不进
@@ -1713,9 +1715,7 @@ def test_pending_fingerprint_is_stable_and_path_sensitive(tmp_path: Path) -> Non
     assert fp != pending_fingerprint([a])
 
 
-def test_force_without_fingerprint_blocks_everything(
-    tmp_path: Path, fixtures_dir: Path
-) -> None:
+def test_force_without_fingerprint_blocks_everything(tmp_path: Path, fixtures_dir: Path) -> None:
     """force=True 但未提供指纹 → 整批拦截、一张不删（force 不得绕过人工核对）。"""
     ws, paths = _mk_ws(tmp_path, fixtures_dir, 8)
     scored = _mk_scores(paths, [False] * 8, [1.0] * 8)
@@ -1780,7 +1780,9 @@ def test_run_cleanup_forwards_confirm_fingerprint(
     assert blocked["summary"]["deleted"] == 0
 
     fingerprint = run_cleanup(str(ws), config, dry_run=True)["summary"]["fingerprint"]
-    forced = run_cleanup(str(ws), config, dry_run=False, force=True, confirm_fingerprint=fingerprint)
+    forced = run_cleanup(
+        str(ws), config, dry_run=False, force=True, confirm_fingerprint=fingerprint
+    )
     assert forced["summary"]["deleted"] == 25
     assert len(_recycle_files(ws)) == 25
 
@@ -2013,9 +2015,7 @@ def test_guard_blocked_resolved_path_is_none(tmp_path: Path, fixtures_dir: Path)
     assert all(b["resolved_path"] is None for b in result["blocked"])
 
 
-def test_symlink_blocked_resolved_path_is_none(
-    tmp_path: Path, fixtures_dir: Path
-) -> None:
+def test_symlink_blocked_resolved_path_is_none(tmp_path: Path, fixtures_dir: Path) -> None:
     """symlink_path 拦截（检查点 A0）不解析：resolved_path 显式为 None（M-09）。"""
     ws = tmp_path / "ws"
     ws.mkdir()

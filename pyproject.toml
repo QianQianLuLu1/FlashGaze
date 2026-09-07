@@ -171,8 +171,9 @@ warn_unreachable = true
 #   阶段 5: strict = true，files 加入 "tests"         ✓
 #   阶段 6: files 加入 "tools/bench"（本地基准脚本）    ✓
 
-# 可选 extras（gradio/mcp/piexif 等）在 CI typecheck job 与最小本地环境中未安装：
-# 声明「缺失时忽略导入」；装了 extras 的环境则照常按真实类型检查，两种环境结果一致。
+# 可选 extras（gradio/mcp/piexif 等）与 e2e 专属依赖（playwright，仅随
+# requirements-e2e.txt 装）在 CI typecheck job 与最小本地环境中未安装：
+# 声明「缺失时忽略导入」；装了的环境则照常按真实类型检查。
 # cv2.quality 属 contrib 模块：基础 opencv-python-headless 的 stubs 里不存在，
 # 装了 opencv-contrib 后则按真实类型检查。
 [[tool.mypy.overrides]]
@@ -185,12 +186,21 @@ module = [
     "face_recognition.*",
     "imagededup.*",
     "pillow_heif.*",
+    "playwright.*",
     "json5",
     "cv2.quality",
     # tqdm 4.x 不带 py.typed（4.68 验证），按无类型处理
     "tqdm",
 ]
 ignore_missing_imports = true
+
+# @mcp.tool() 装饰器：最小环境不装 mcp extra 时 mcp.* 为 Any，strict 的
+# disallow_untyped_decorators 会把 Any 装饰器判为 untyped-decorator（共 5 处）；
+# 装了 mcp 则是真实类型、本开关无感。仅对该文件关闭此一项，保证「装/不装
+# mcp 两种环境 mypy 结果一致」。
+[[tool.mypy.overrides]]
+module = "flashgaze.mcp_server"
+disallow_untyped_decorators = false
 
 # ── ruff lint 与格式化 ─────────────────────────────────────────────────────
 # CI 由 lint job 执行（ubuntu / py3.13 单腿，纯静态分析无需安装项目依赖）；

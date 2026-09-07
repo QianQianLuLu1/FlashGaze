@@ -5,7 +5,7 @@
 
 ## 1. 为什么要治理可选模块
 
-主 CI 的 `test` 门禁（`fail_under=80`）只 `omit` 依赖重型/可选包的 **3 个模块**（`core.xlsx_exporter`、`core.deduplicator`、`core.portrait_engine`）；`mcp_server` 自 2026-09 起随主矩阵加装 `mcp` extra 纳入主门禁，`webui/app`（gradio 懒加载、无重依赖）同批纳入（M-12 修复）。这 3 个重依赖模块由 `extras` job **硬门槛**强制：`.coveragerc-extras` `fail_under=50` 总下限 + `ci.yml` 逐模块下限，覆盖率不达标**阻塞合并**。
+主 CI 的 `test` 门禁（`fail_under=80`）只 `omit` 依赖重型/可选包的 **3 个模块**（`core.xlsx_exporter`、`core.deduplicator`、`core.portrait_engine`）；`mcp_server`、`webui/app`（含 `exif_writer`）自 2026-09 起随主矩阵加装 `mcp,gui,exif,heic` 轻量 extras 纳入主门禁（M-12 修复；缺依赖时对应测试跳过、门禁失真，实测仅装 `mcp` 时总覆盖率 79.31% 不达标，故其运行依赖一并进主矩阵）。这 3 个重依赖模块由 `extras` job **硬门槛**强制：`.coveragerc-extras` `fail_under=50` 总下限 + `ci.yml` 逐模块下限，覆盖率不达标**阻塞合并**。
 
 这套硬门槛保障了主流程交付效率，但历史教训是：`extras` job 曾长期「只报告不设门」（`continue-on-error` 吞掉一切失败），可选模块的覆盖率下滑被静默忽略。因此在本门槛之上叠加**旁路定时治理流水线**，实现「看得见、可告警、能升级、会自愈」。
 
@@ -82,7 +82,7 @@ nightly 采集 → extras_health.py 判定
 - 定时任务仅 nightly（1 次）+ 每周一（1 次），双腿（ubuntu/macos × py3.12）runner 占用极低，不影响日常 PR 时长。
 - `tools/extras_health.py` 纯标准库、无新依赖，逻辑与 I/O 分离，可本地单测（`pytest tools/` 或手动构造 coverage.xml/junit.xml 验证 `evaluate`）。
 - 阈值参数集中在 `DEFAULT_CONFIG`，调参无需改工作流；如需更激进/宽松，改常量或传 `--config` 即可。
-- **blast radius（M-12 修复后）**：主 `test` 门禁 `fail_under=80` 数值不变，但 omit 从 5 模块收窄为 3 个（`mcp_server`/`webui.app` 已纳入主门禁，主矩阵加装 `mcp` extra）；`extras` job 默认即阻塞（`.coveragerc-extras` `fail_under=50` + `ci.yml` 逐模块下限），sentinel 锁仅在锁存在时把总下限加严到 60。`tools/extras_health.py`、`extras-health.yml`、codecov flags 结构零触碰；extras 配置的 source 仍为 5 模块（`MODULES` 依赖）。契约由 `tests/test_coverage_gate_contract.py` 锁定。
+- **blast radius（M-12 修复后）**：主 `test` 门禁 `fail_under=80` 数值不变，但 omit 从 5 模块收窄为 3 个（`mcp_server`/`webui.app` 已纳入主门禁，主矩阵加装 `mcp,gui,exif,heic` 轻量 extras 使其测试真实执行）；`extras` job 默认即阻塞（`.coveragerc-extras` `fail_under=50` + `ci.yml` 逐模块下限），sentinel 锁仅在锁存在时把总下限加严到 60。`tools/extras_health.py`、`extras-health.yml`、codecov flags 结构零触碰；extras 配置的 source 仍为 5 模块（`MODULES` 依赖）。契约由 `tests/test_coverage_gate_contract.py` 锁定。
 
 ## 6. 故障排查
 
