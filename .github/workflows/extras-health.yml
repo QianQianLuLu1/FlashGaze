@@ -1,0 +1,296 @@
+name: extras-health
+
+# ── 可选模块长期健康度监控与治理（旁路定时流水线）─────────────────────────
+# 职责：定时采集 5 个可选模块的覆盖率与测试通过率 → 判定劣化 → 可视化趋势
+#       → 告警/建 Issue → 临界时写/清 sentinel 标记（交由 ci.yml 升级为阻塞合并）。
+# 设计要点：
+#  - 不阻塞日常 PR；主 test 门禁与 extras job 默认 continue-on-error 均不变。
+#  - 通过仓库内单一事实 .github/extras-strict.lock 与 ci.yml 解耦：本工作流写锁，
+#    ci.yml 的 check-strict job 读锁翻转 extras 的 continue-on-error。
+#  - 趋势图镜像 benchmark.yml：用 github-action-benchmark 渲染到 gh-pages dev/extras-health/。
+#  - 每周摘要评论到固定 tracking Issue（EXTRAS_HEALTH_ISSUE 环境变量，编号 #11，见 docs/extras-governance.md）。
+
+on:
+  schedule:
+    - cron: "17 19 * * *"      # nightly：采集快照 + 判定 + 趋势（UTC 19:17，避开整点）
+    - cron: "9 9 * * 1"        # 每周一：发摘要到 tracking Issue
+  workflow_dispatch:
+    inputs:
+      force_report:
+        description: "强制向 tracking Issue 发送一次摘要"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write        # 推 gh-pages 趋势、写/清 .github/extras-strict.lock
+  issues: write          # 建/评论/关闭 tracking Issue
+  pull-requests: read
+
+concurrency:
+  group: extras-health
+  cancel-in-progress: false
+
+env:
+  EXTRAS_HEALTH_ISSUE: "11"   # 固定 tracking Issue #11：https://github.com/QianQianLuLu1/FlashGaze/issues/11（见 docs/extras-governance.md）
+  HISTORY_REF: gh-pages
+  HISTORY_PATH: dev/extras-health/history.json
+
+jobs:
+  # ── 采集 + 判定 ───────────────────────────────────────────────────────
+  collect:
+    name: collect extras health
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: Install dependencies (with safe extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[cv-enhanced,dedup,vlm-multi,gui,exif,xlsx,portrait]"
+          pip install "mcp>=1.2.0,<2.0.0"
+          pip install -r requirements-dev.txt
+
+      - name: Run extras tests with coverage + junit
+        continue-on-error: true   # 采集阶段不因测试失败而中断；失败会记入 junit 并触发 R3
+        run: >
+          python -m pytest tests/ -v --tb=short
+          --cov=flashgaze
+          --cov-config=.coveragerc-extras
+          --cov-report=xml:coverage.xml
+          --junitxml=junit.xml
+
+      - name: Fetch history from gh-pages
+        continue-on-error: true
+        run: |
+          git fetch origin ${{ env.HISTORY_REF }} --depth=1 || true
+          git show origin/${{ env.HISTORY_REF }}:${{ env.HISTORY_PATH }} > history.json 2>/dev/null || echo "[]" > history.json
+
+      - name: Evaluate health
+        id: eval
+        run: |
+          python tools/extras_health.py \
+            --coverage coverage.xml \
+            --junit junit.xml \
+            --history history.json \
+            --out-dir health_out
+          # 把判定结果透传给后续步骤
+          python - <<'PY'
+          import json
+          d = json.load(open("health_out/decision.json"))
+          with open("$GITHUB_OUTPUT", "a") as f:
+              f.write(f"decision={d['decision']}\n")
+              f.write(f"write_lock={str(d['actions']['write_lock']).lower()}\n")
+              f.write(f"clear_lock={str(d['actions']['clear_lock']).lower()}\n")
+              f.write(f"create_issue={str(d['actions']['create_issue']).lower()}\n")
+              f.write(f"close_issue={str(d['actions']['close_issue']).lower()}\n")
+          PY
+
+      - name: Upload health artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extras-health-out
+          path: health_out/
+          if-no-files-found: warn
+
+      # ── 写/清 sentinel（临界/恢复动作）──────────────────────────────
+      # 同工作流并发已由工作流级 concurrency 组排队串行化；本步骤负责跨运行的
+      # 推送竞争（与人类提交 / 其他机器人提交竞争）：
+      #  - 幂等守卫：已锁不重写 / 已清不重删，避免重复提交刷屏；
+      #  - 推送被拒（non-fast-forward）时自动 fetch + rebase + 线性退避重试，
+      #    最多 5 次；提交内容为单文件写/删，重放安全；
+      #  - 仅默认分支生效：锁只有落在默认分支才会被 ci.yml 的 check-strict 读到，
+      #    非默认分支手动触发时仅提示跳过。
+      - name: Publish sentinel state (idempotent + retried push)
+        if: steps.eval.outputs.write_lock == 'true' || steps.eval.outputs.clear_lock == 'true'
+        env:
+          WRITE_LOCK: ${{ steps.eval.outputs.write_lock }}
+          CLEAR_LOCK: ${{ steps.eval.outputs.clear_lock }}
+          TARGET_REF: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          LOCK=.github/extras-strict.lock
+          if [ "$TARGET_REF" != "$DEFAULT_BRANCH" ]; then
+            echo "::notice::当前分支 $TARGET_REF 非默认分支 $DEFAULT_BRANCH，跳过 sentinel 写入（锁仅对默认分支的 CI 生效）"
+            exit 0
+          fi
+          # 幂等守卫：保留首次加锁时间戳，持续临界/持续恢复期间不重复提交
+          if [ "$WRITE_LOCK" = "true" ] && [ -f "$LOCK" ]; then
+            echo "::notice::sentinel 已存在，跳过重复写锁"
+            exit 0
+          fi
+          if [ "$CLEAR_LOCK" = "true" ] && [ ! -f "$LOCK" ]; then
+            echo "::notice::sentinel 不存在，跳过重复清锁"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ "$WRITE_LOCK" = "true" ]; then
+            date -u +"%Y-%m-%dT%H:%M:%SZ" > "$LOCK"
+            git add "$LOCK"
+            git commit -m "chore(extras): auto-lock extras-strict (critical health deterioration)"
+          else
+            git rm "$LOCK"
+            git commit -m "chore(extras): auto-unlock extras-strict (health recovered)"
+          fi
+          # 重试推送：被拒则同步远端最新 HEAD，rebase 本地提交后重试（最多 5 次）
+          for attempt in 1 2 3 4 5; do
+            if git push origin "HEAD:refs/heads/$TARGET_REF"; then
+              echo "sentinel 推送成功（第 $attempt 次尝试）"
+              exit 0
+            fi
+            echo "::warning::推送被拒，同步最新远端后重试（第 $attempt 次）"
+            sleep $((attempt * 10))
+            git fetch --depth=50 origin "$TARGET_REF"
+            if ! git rebase "origin/$TARGET_REF"; then
+              git rebase --abort
+              echo "::error::sentinel rebase 冲突（可能有人工改动锁文件），本次推送中止，交由下一轮 nightly 自愈"
+              exit 1
+            fi
+          done
+          echo "::error::sentinel 推送在 5 次重试后仍失败"
+          exit 1
+
+      # ── 告警 / 建 Issue ───────────────────────────────────────────────
+      - name: Create or update cleanup Issue (warning/critical)
+        if: steps.eval.outputs.create_issue == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const decision = JSON.parse(fs.readFileSync('health_out/decision.json', 'utf8'));
+            const body = decision.issue_text;
+            const title = `[extras-health] 可选模块质量${decision.decision === 'critical' ? '临界' : '告警'} — ${new Date().toISOString().slice(0,10)}`;
+            // 先尝试复用本周已存在的 open Issue，避免刷屏
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'extras-health', per_page: 10,
+            });
+            const existing = issues.find(i => i.title.startsWith('[extras-health]'));
+            if (existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.number, body: '### 更新\n' + body,
+              });
+              core.info(`Updated existing issue #${existing.number}`);
+            } else {
+              const { data: created } = await github.rest.issues.create({
+                owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['extras-health', decision.decision === 'critical' ? 'blocking' : 'tech-debt'],
+              });
+              core.info(`Created issue #${created.number}`);
+            }
+
+      - name: Close resolved Issue (recovered)
+        if: steps.eval.outputs.close_issue == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'extras-health', per_page: 10,
+            });
+            for (const i of issues) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: i.number, body: '✅ 健康度已恢复达标，自动关闭本清理追踪。',
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: i.number, state: 'closed',
+              });
+            }
+
+  # ── 推送趋势图到 gh-pages（复用 benchmark.yml 模式）────────────────────
+  charts:
+    name: publish trend charts
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download health outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: extras-health-out
+          path: health_out
+
+      - name: Publish to gh-pages (dev/extras-health)
+        uses: rhysd/github-action-benchmark@v1
+        with:
+          name: FlashGaze Extras Coverage
+          tool: 'customSmallerIsBetter'   # 仅用于承载自定义 metric；实际为覆盖率（越大越好）
+          output-storage: gh-pages
+          benchmark-data-dir-path: dev/extras-health
+          gh-pages-branch: gh-pages
+          # 改手动推送（下一步）：action 不支持推送重试，与 benchmark nightly 并发推 gh-pages 会被拒
+          auto-push: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          max-items-in-chart: 200
+          raw-data-file: health_out/benchmark.json
+
+      # 手动重试推送：上一步已在本地 gh-pages 分支生成提交；被拒则 fetch + rebase + 退避重试。
+      # 两工作流写 gh-pages 的目录不同（dev/bench vs dev/extras-health），rebase 无内容冲突。
+      - name: Push gh-pages with retry
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if git push origin gh-pages:gh-pages; then
+              echo "gh-pages 推送成功（第 $attempt 次尝试）"
+              exit 0
+            fi
+            echo "::warning::gh-pages 推送被拒，同步最新远端后重试（第 $attempt 次）"
+            sleep $((attempt * 10))
+            git fetch --depth=50 origin gh-pages
+            if ! git rebase origin/gh-pages; then
+              git rebase --abort
+              echo "::error::gh-pages rebase 冲突，本次趋势数据推送中止，下一轮运行自愈"
+              exit 1
+            fi
+          done
+          echo "::error::gh-pages 推送在 5 次重试后仍失败"
+          exit 1
+
+  # ── 每周摘要（周一或手动）─────────────────────────────────────────────
+  weekly-report:
+    name: weekly summary to tracking issue
+    if: github.event.schedule == '9 9 * * 1' || github.event_name == 'workflow_dispatch'
+    needs: collect
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Download health outputs
+        uses: actions/download-artifact@v4
+        with:
+          name: extras-health-out
+          path: health_out
+
+      - name: Post weekly summary
+        if: env.EXTRAS_HEALTH_ISSUE != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const decision = JSON.parse(fs.readFileSync('health_out/decision.json', 'utf8'));
+            const issueNum = Number(process.env.EXTRAS_HEALTH_ISSUE);
+            if (!issueNum) { core.info('EXTRAS_HEALTH_ISSUE 未配置，跳过摘要评论'); return; }
+            const body = '## 每周可选模块健康度摘要\n\n' + decision.issue_text +
+              '\n\n> 完整趋势图：https://<org>.github.io/<repo>/dev/extras-health/';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: issueNum, body,
+            });

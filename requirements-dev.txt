@@ -1,0 +1,20 @@
+pytest>=7.4.0,<10
+pytest-cov>=4.1.0,<8
+# 性能基准（基准套件在 benchmarks/，CI 由 benchmark.yml 的 benchmark job 执行；
+# 回归阈值与本地运行命令见 docs/bench/README.md）
+pytest-benchmark>=4.0,<6
+# 静态类型检查（配置见 pyproject.toml [tool.mypy]；CI 由 typecheck job 执行）
+# 解锁 PEP 695（详见 docs/PEP695_COMPAT.md）后若需新版本特性，再放宽 <2 上界；
+# 放宽前须确认 mypy 已在目标 python_version 下支持 PEP 695 解析（路线 A）或已升最低 Python 至 3.12+（路线 B）。
+mypy>=1.11,<2
+# requests 官方包不带 py.typed，装 stubs 才能对 vlm_client 的 HTTP 调用做类型检查
+types-requests>=2.31,<3
+# lint 与格式化（配置见 pyproject.toml [tool.ruff]；CI 由 lint job 执行）
+# 钉死 minor：ruff 0.x 的 minor 版本会扩充默认规则集，升级须经评审
+ruff>=0.16,<0.17
+# 本地提交钩子（仓库根 .pre-commit-config.yaml；make hooks 全量预检）
+# 复用上方 ruff/mypy 的版本区间，保证本地与 CI 同源
+pre-commit>=3.5,<5
+# 终端级 CLI E2E（tests/test_cli_terminal_e2e.py 的 PTY 用例；仅 POSIX 生效，
+# Windows 上可安装但对应用例 skipif 跳过）
+pexpect>=4.9,<5

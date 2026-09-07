@@ -1,0 +1,216 @@
+# FlashGaze 构建与工具配置
+#
+# 项目元数据（name/version/依赖/extras/entry_points/package_data）以本文件
+# 的 [project] 表为单一来源；version 动态取自 flashgaze/__init__.py 的
+# __version__，仓库内不存在其他元数据副本（setup.py 已移除）。
+# 构建后端为 setuptools（PEP 517），可编辑安装走 PEP 660。
+
+[build-system]
+# setuptools>=77：PEP 639 SPDX license 表达式（下方 license = "MIT"）所需；
+# 同时满足 PEP 660 可编辑安装（>=64）。
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+# ── 项目元数据（PEP 621）───────────────────────────────────────────────────
+[project]
+name = "flashgaze"
+description = "瞬选灵眸 - AI 辅助图片评分与筛选 CLI + MCP Server"
+readme = {content-type = "text/plain", text = """\
+FlashGaze 是面向摄影师与 AI Agent 的图片评分筛选工具。
+CV 客观评分（清晰度/曝光度/构图）+ VLM 场景补偿（艺术手法识别），
+支持 CLI 与 MCP Server 双入口，批量评分、导出精选、工作空间清理。"""}
+requires-python = ">=3.10"
+# PEP 639 SPDX 表达式（替代旧式 License classifier，两者互斥）
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+    # 必须用 headless 版：无头服务器与 CI 环境（如 GitHub ubuntu runner）不装 OpenGL
+    # 图形栈，完整版 opencv-python 的 Linux wheel 链接了 libGL.so.1，import cv2 会直接崩。
+    # 本项目从不调用任何 OpenCV GUI 函数（imshow/namedWindow/waitKey/destroyAllWindows），
+    # headless 与完整版是同一套代码，非 GUI API 完全一致。
+    "opencv-python-headless>=4.8.0,<6",
+    "Pillow>=10.0.0,<14",
+    # 上限收紧到 3.10 支持终点：numpy 2.3 起 requires-python >=3.11；同时避开 2.5+
+    # 内置 stubs 的 PEP 695 `type` 语法，与 mypy python_version=3.10 目标冲突（语法级错误）。
+    # 维护约定：解除该上限的前提是 mypy 目标升至 3.11+ 或 numpy stubs 的 PEP 695 问题消除，
+    # 且解除前须重跑 CI extras job 验证依赖解析。
+    # PEP 695 兼容性跟踪与解锁口径（OR）：详见 docs/PEP695_COMPAT.md。
+    "numpy>=1.24.0,<2.3",
+    "requests>=2.31.0,<3",
+    # VLM 返回的 JSON 常被包在 ```json 围栏里，或带尾逗号/注释，
+    # stdlib json.loads 会直接抛错导致场景补偿静默失效。json5 容忍这些写法。
+    "json5>=0.9",
+    # CLI 终端进度条（仅渲染到 stderr；--verbose 日志与非 TTY 静默路径不经过 tqdm）
+    "tqdm>=4.66,<5",
+]
+# 版本唯一来源：flashgaze/__init__.py 的 __version__（setuptools 经 AST 读取，
+# 构建元数据时无需安装任何依赖）
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/QianQianLuLu1/FlashGaze"
+
+[project.scripts]
+flashgaze = "flashgaze.cli.entry:main"
+# Web GUI 入口：flashgaze-webui [--host 0.0.0.0] [--port 8080] [--dir ./photos]
+flashgaze-webui = "flashgaze.webui.app:main"
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2.0,<2.0.0"]
+# CV 增强维度（M2/M3/M4/M5）：默认不安装，按需 extras 启用
+cv-enhanced = ["opencv-contrib-python-headless>=4.8.0,<6"]
+portrait = ["face_recognition>=1.3.0,<2"]
+dedup = ["imagededup>=0.2.0,<1"]
+# VLM 可选 LiteLLM 后端（VLM 扩展 M2/M10）：默认所有 provider 走内置 pin-IP 直连层，无需 litellm
+# 仅编程接口 VLMClient(use_litellm=True) 时需要
+vlm-multi = ["litellm>=1.40,<2"]
+# Web GUI（基于 Gradio）：pip install -e ".[gui]" 后运行 flashgaze-webui
+# gradio==6.24.0 已端到端冒烟验证（见测试记录）。区间放宽到 >=4.21,<7：
+# 下界 4.21 是 app.py 中 Gallery.object_fit 的最低要求，上界 7 之前避免未验证的 major 破坏 GUI。
+# 仅 6.24.0 经完整实测，其余 4.21–6.x 小版本仅做 API 兼容保留。
+gui = ["gradio>=4.21,<7"]
+# EXIF 元数据导出（M2）：仅 JPEG/WebP，可选依赖
+exif = ["piexif>=1.1.3,<2"]
+# Excel 清单导出（M3）：openpyxl 默认支持中文，无需额外编码处理
+xlsx = ["openpyxl>=3.1.0,<4"]
+# HEIC/HEIF 格式支持：可选格式，image_io 已做惰性注册与降级
+heic = ["pillow-heif>=0.15.0,<2"]
+# all 刻意不含 face_recognition（portrait）与 mcp，与迁移前 setup.py 行为一致
+all = [
+    "opencv-contrib-python-headless>=4.8.0,<6",
+    "imagededup>=0.2.0,<1",
+    "litellm>=1.40,<2",
+    "gradio>=4.21,<7",
+    "piexif>=1.1.3,<2",
+    "openpyxl>=3.1.0,<4",
+    "pillow-heif>=0.15.0,<2",
+]
+
+# ── setuptools 构建配置（等价迁移自原 setup.py）──────────────────────────
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "flashgaze.__version__"}
+
+[tool.setuptools.packages.find]
+# 等价于原 find_packages(exclude=["tests", "tests.*", "_plans*"])，白名单形式
+# 更明确；namespaces = false 严格复刻 find_packages 语义（仅收录含 __init__.py
+# 的目录），确保 models/brisque/（无 __init__.py）保持为数据目录而非包——
+# 与迁移前 wheel 内容一致。
+include = ["flashgaze*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+# BRISQUE 模型文件（*.yml）随包分发，wheel 安装后 cv_engine 无需联网即可加载。
+# models/brisque/ 是纯数据目录、没有 __init__.py，packages.find 不会把它当成包，
+# 因此只有挂在 flashgaze 包下的相对路径通配真正生效；点号键 "flashgaze.models.brisque"
+# 当前匹配不到任何包，保留作防御——若哪天给 brisque/ 加了 __init__.py 使其成为
+# 真包，点号键会自动接管，届时可删掉相对路径那条。
+flashgaze = ["py.typed", "models/brisque/*.yml", "models/brisque/*.md"]
+"flashgaze.models.brisque" = ["*.yml", "*.md"]
+
+[tool.pytest.ini_options]
+# 默认门禁口径（审查项 M-17）：裸跑 pytest 只收集 tests/ 且排除 e2e；
+# 显式跑 e2e 用 -m "e2e"（CLI -m 覆盖本默认）；解除默认过滤用 -o addopts=。
+# benchmarks/ 为顶层独立目录，tests/ 收集永不触及；bench_full 由 benchmark.yml 自行过滤。
+addopts = '-m "not e2e"'
+testpaths = ["tests"]
+markers = [
+    "slow: 标记耗时用例（跳过用 -m 'not slow'）",
+    "e2e: 浏览器端到端用例（tests/e2e，需 gradio + pytest-playwright；chromium 默认，firefox 必选，webkit 可选，经 --browser 切换；跳过用 -m 'not e2e'）",
+    "bench_full: 全量批量基准（单次运行数分钟，仅 nightly 运行；跳过用 -m 'not bench_full'）",
+]
+
+# 覆盖率配置（source/branch/fail_under=80/omit）见 .coveragerc —— coverage 读取
+# 优先级 .coveragerc > pyproject，为避免双源冲突不在此重复声明；extras job 专用
+# 的报告配置在 .coveragerc-extras。
+
+# ── mypy 静态类型检查 ──────────────────────────────────────────────────────
+# CI 由 typecheck job 执行（ubuntu / py3.13 单腿，目标版本语义由下方
+# python_version 固定，无需进测试矩阵）；本地等价命令：python -m mypy
+[tool.mypy]
+# python_version 与 [project] requires-python = ">=3.10" 的下界对齐，确保类型检查不依赖、
+# 也不放行 3.11/3.12 才引入的语法与类型特性；3.10-3.13 的运行时兼容统一由
+# CI test 矩阵兜底，mypy 只负责最低支持版本层面的类型检查。
+# 与 [project] requires-python = ">=3.10" 的下界对齐；PEP 695 语法在当前 3.10 目标下
+# 会被 mypy 报语法级错误，故代码库禁用 PEP 695、沿用 TypeVar/TypeAlias/Generic。
+# 解锁口径（OR，满足任一即可）：mypy 上游支持低版本目标的 PEP 695 向下兼容解析，
+# 或项目最低 Python 升到 3.12+。详情与迁移步骤见 docs/PEP695_COMPAT.md。
+python_version = "3.10"
+files = ["flashgaze", "tests", "tools/bench"]  # tools/bench 本地基准脚本已纳入类型检查（仅该子目录，不覆盖整个 tools/）
+pretty = true
+show_error_codes = true
+show_column_numbers = true
+
+# 阶段 5（当前）：strict 全量基线。路线图阶段 0-4 逐级收紧的开关（check_untyped_defs/
+# no_implicit_optional/warn_redundant_casts/warn_unused_ignores/disallow_incomplete_defs/
+# disallow_any_generics/warn_return_any/strict_equality 等）均被 strict 包含；
+# warn_unreachable 非 strict 必含项，显式保留防回退。
+strict = true
+warn_unreachable = true
+
+# 收紧路线图（已全部完成，2026-08-22）：
+#   阶段 1: flashgaze.models / flashgaze.utils        ✓
+#   阶段 2: flashgaze.plugins / flashgaze.core        ✓
+#   阶段 3: flashgaze.cli / flashgaze.webui           ✓
+#   阶段 4: 全局 disallow_incomplete_defs / disallow_any_generics /
+#           warn_return_any / strict_equality         ✓
+#   阶段 5: strict = true，files 加入 "tests"         ✓
+#   阶段 6: files 加入 "tools/bench"（本地基准脚本）    ✓
+
+# 可选 extras（gradio/mcp/piexif 等）在 CI typecheck job 与最小本地环境中未安装：
+# 声明「缺失时忽略导入」；装了 extras 的环境则照常按真实类型检查，两种环境结果一致。
+# cv2.quality 属 contrib 模块：基础 opencv-python-headless 的 stubs 里不存在，
+# 装了 opencv-contrib 后则按真实类型检查。
+[[tool.mypy.overrides]]
+module = [
+    "mcp.*",
+    "piexif.*",
+    "openpyxl.*",
+    "gradio.*",
+    "litellm.*",
+    "face_recognition.*",
+    "imagededup.*",
+    "pillow_heif.*",
+    "json5",
+    "cv2.quality",
+    # tqdm 4.x 不带 py.typed（4.68 验证），按无类型处理
+    "tqdm",
+]
+ignore_missing_imports = true
+
+# ── ruff lint 与格式化 ─────────────────────────────────────────────────────
+# CI 由 lint job 执行（ubuntu / py3.13 单腿，纯静态分析无需安装项目依赖）；
+# 本地等价命令：python -m ruff check . && python -m ruff format --check .
+[tool.ruff]
+target-version = "py310"   # 与 [project] requires-python = ">=3.10" 对齐
+line-length = 100
+# 本地尚未 git init 时 ruff 读不到 .gitignore，显式排除本地目录；
+# git init 后与 .gitignore 双保险
+extend-exclude = [
+    "_plans",                    # 本地计划草稿（.gitignore 已忽略）
+    "_rescued",                  # 本地救援副本（.gitignore 已忽略）
+    "flashgaze.egg-info",        # 构建生成物
+    "flashgaze.egg-info.stash",  # .stash 后缀不被 *.egg-info/ 通配覆盖
+    "_gen_report.py",            # 一次性 HTML 报告生成脚本，产物已 gitignore
+    "_gen_analysis_report.py",
+]
+
+[tool.ruff.lint]
+# ruff 0.16 起默认规则集扩到 413 条，跟随默认、不显式 select；minor 升级
+# 可能引入新规则使 CI 变红，属预期——经 dependabot 月度 PR 评审后处理。
+# RUF001-003 对中文注释/文档字符串/字符串全量误报，关闭。
+ignore = ["RUF001", "RUF002", "RUF003"]

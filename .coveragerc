@@ -1,0 +1,32 @@
+# FlashGaze 覆盖率配置（本地与 CI test 矩阵共用，单一来源）
+#
+# 运行：python -m pytest tests/ --cov=flashgaze --cov-report=term-missing
+# 门槛：[report] fail_under = 80 —— pytest-cov 与 `coverage report` 都会在此值
+# 之下以非零码退出；本地与 CI 同一份配置，改门槛只改这里。
+#
+# 注意：pytest-cov >= 7.0 已移除子进程自动覆盖，tests/test_cli_e2e.py 的
+# subprocess 用例不计入覆盖率；进程内用例见 tests/test_cli_main.py。
+
+[run]
+source = flashgaze
+branch = true
+
+# 可选 extras 模块（M-12 修复后仅剩 3 个）：xlsx_exporter（openpyxl）、
+# deduplicator（imagededup）、portrait_engine（face_recognition）的重依赖在
+# 主测试矩阵与最小本地环境中不安装，对应行为测试被 importorskip/skipif 跳过，
+# 纳入统计只会稀释门槛信号；这 3 个模块由 CI 的 extras job（.coveragerc-extras
+# 硬门槛：总 fail_under=50 + ci.yml 逐模块下限）验证。mcp_server（主矩阵加装
+# mcp extra，tests/test_cleanup.py 的 8 处用例已补 importorskip 守卫）与
+# webui/app（gradio 懒加载、无重依赖）自 2026-09 起纳入本 80% 门槛考核。
+omit =
+    flashgaze/core/xlsx_exporter.py
+    flashgaze/core/deduplicator.py
+    flashgaze/core/portrait_engine.py
+
+[report]
+show_missing = true
+fail_under = 80
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError

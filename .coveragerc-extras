@@ -1,0 +1,35 @@
+# FlashGaze 覆盖率配置 —— CI extras job 专用（硬门槛，M-12 修复）。
+#
+# extras job 安装全部可选依赖（gradio/openpyxl/imagededup/mcp/portrait 等），
+# 单独度量 5 个可选模块：
+#   flashgaze.mcp_server
+#   flashgaze.webui.app
+#   flashgaze.core.xlsx_exporter
+#   flashgaze.core.deduplicator
+#   flashgaze.core.portrait_engine
+#
+# source 收紧为上述 5 个模块（tools/extras_health.py 的 MODULES 清单与夜间
+# extras-health 任务依赖它，不得缩减）。fail_under = 50 是 extras job 的
+# 无条件总下限（M-12 修复：杜绝「只报告不设门」）；逐模块下限位于 ci.yml
+# extras job 的 Coverage gate (hard floors) 步骤，由
+# tests/test_coverage_gate_contract.py 锁定防退化。sentinel 锁
+# （.github/extras-strict.lock）保留为加严升级机制（锁存在时总下限抬到 60，
+# 见 docs/extras-governance.md 的 R1-R5）。
+# 经 `pytest --cov-config=.coveragerc-extras` 显式指定。
+
+[run]
+source =
+    flashgaze.mcp_server
+    flashgaze.webui.app
+    flashgaze.core.xlsx_exporter
+    flashgaze.core.deduplicator
+    flashgaze.core.portrait_engine
+branch = true
+
+[report]
+show_missing = true
+fail_under = 50
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    raise NotImplementedError

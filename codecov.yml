@@ -1,0 +1,50 @@
+# Codecov 配置 — FlashGaze
+# 说明：
+# - 主矩阵覆盖率（flag: ubuntu-latest / windows-latest / macos-latest）是阻塞门禁的镜像，
+#   真正的 fail_under=80 由 .coveragerc + pytest-cov 在 CI 内强制。
+# - 可选模块（extras）覆盖率以独立 flag extras-ubuntu / extras-macos 上传，并设为
+#   informational（不阻塞 PR 合并）；extras 的真实门禁在 ci.yml extras job 的
+#   Coverage gate (hard floors) 步骤（总 50% + 逐模块下限，M-12 修复），
+#   夜间 sentinel 锁机制负责加严升级，不走 Codecov status gate。
+
+coverage:
+  status:
+    # 总体 project 状态：仅作信息展示，不阻塞 PR（真实门禁在 pytest-cov）。
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: true
+    # patch 状态：核心代码 patch 设为强制（informational:false），可选模块 patch 保持 informational。
+    patch:
+      default:
+        informational: true
+      core:
+        paths:
+          - "flashgaze/**"
+          - "!flashgaze/core/xlsx_exporter/**"
+          - "!flashgaze/core/deduplicator/**"
+          - "!flashgaze/core/portrait_engine/**"
+        informational: false
+        target: 80%
+
+flags:
+  # 可选模块独立 flag：carryforward 使其余矩阵腿的部分上传也能合并滚动覆盖率。
+  extras-ubuntu:
+    carryforward: true
+    informational: true
+  extras-macos:
+    carryforward: true
+    informational: true
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+  show_carryforward_flags: true
+
+ignore:
+  - "tests/**"
+  - "tools/**"
+  - "docs/**"
+  - "benchmarks/**"
