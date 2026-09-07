@@ -1,0 +1,154 @@
+# 依赖安全扫描（发现侧）：pip-audit 审计"已安装环境"中的依赖树，
+# 反映 pyproject.toml 单一配置源经 pip 解析后的真实传递依赖。
+# 与 .github/dependabot.yml 分工：本工作流负责发现已知漏洞，dependabot 负责修复。
+name: Security
+
+on:
+  pull_request:
+  schedule:
+    # 每日一次：UTC 18:30 ≈ 北京时间次日 02:30
+    # 刻意错开 benchmark.yml 的 nightly（UTC 18:00 整点），避免两个定时任务撞峰
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+
+concurrency:
+  # 显式字面量前缀，不依赖 name 字段的隐性契约（与 benchmark.yml 同款写法）
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+# 最小权限：顶层只读。security-events: write 仅 SARIF 上传需要，
+# 收窄到 job 级（见下方 permissions），其余步骤天然只读。
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: audit (ubuntu, py3.13)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # SARIF 上传到 Code Scanning 需要写 security-events；
+      # 其余步骤继承顶层只读，符合最小权限原则
+      contents: read
+      security-events: write
+    env:
+      # ── 漏洞豁免集中声明（单一调整点）──────────────────────────────
+      # 空格分隔的漏洞 ID 列表，逐个映射为 pip-audit 的 --ignore-vuln 参数。
+      # 使用规范：每条豁免必须在本注释中登记 漏洞 ID / 原因 / 复审日期，
+      # 且豁免仅是临时手段，复审到期后必须移除或续期。
+      # 示例（当前无豁免）：
+      #   PIP_AUDIT_IGNORE: 'GHSA-xxxx-xxxx-xxxx'
+      #   豁免理由：GHSA-xxxx-xxxx-xxxx —— 版本上限为兼容刻意 pin，
+      #   上游暂无修复版本；复审日期 2027-01-01
+      PIP_AUDIT_IGNORE: ''
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: 'pip'
+
+      # 与 ci.yml 同款基础安装：依赖以 pyproject.toml 为单一配置源，
+      # 扫描对象即"解析后的真实传递依赖树"。dev 工具链不进入本环境，
+      # 由下方独立的观察步骤单独扫描。
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          # 扫描工具钉 minor 区间：与仓库对工具链的版本约束风格一致
+          pip install "pip-audit>=2.7,<3"
+
+      # ── 主扫描：SARIF 报告 ─────────────────────────────────────────
+      # 双跑方案：本步尽力产出 SARIF 报告，门禁退出码完全由下一步承担。
+      # pip-audit 使用 --output 时发现漏洞会在写出报告前抛错终止：非零退出且
+      # 可能不产出文件，均属预期 → || true 使本步语义为"尽力产出报告"；
+      # 后续门禁 / 摘要 / dev 观察步骤均带 if: always()，保证执行链不断。
+      - name: Audit installed dependencies (SARIF report)
+        run: |
+          IGNORE_ARGS=()
+          for id in $PIP_AUDIT_IGNORE; do
+            IGNORE_ARGS+=(--ignore-vuln "$id")
+          done
+          pip-audit "${IGNORE_ARGS[@]}" \
+            --format=sarif --output=pip-audit.sarif || true
+
+      # 门禁：发现已知漏洞时 pip-audit 以非零码退出 → job 失败（默认行为，保留）。
+      # if: always() 保证无论前置步骤成败本步都执行；steps.gate.outcome
+      # 同时是下方摘要步骤的判定依据。
+      - name: Audit installed dependencies (gate)
+        id: gate
+        if: always()
+        run: |
+          # 管道退出码取自 tee 前：bash 默认不开 pipefail，必须显式开启，
+          # 否则 pip-audit 的非零退出会被 tee 吞掉导致门禁恒绿
+          set -o pipefail
+          IGNORE_ARGS=()
+          for id in $PIP_AUDIT_IGNORE; do
+            IGNORE_ARGS+=(--ignore-vuln "$id")
+          done
+          pip-audit "${IGNORE_ARGS[@]}" 2>&1 | tee pip-audit.txt
+
+      # 漏洞摘要写入 Job Summary。仅当门禁步骤 outcome == success 时才写"未发现漏洞"；
+      # 失败时从 pip-audit.txt 输出摘要，文件缺失（如安装阶段已失败）则写明确的失败说明，
+      # 绝不误报绿色。
+      - name: Write audit summary
+        if: always()
+        run: |
+          {
+            echo "## pip-audit 依赖漏洞扫描"
+            echo
+            if [[ "${{ steps.gate.outcome }}" == "success" ]]; then
+              echo "✅ 核心依赖未发现已知漏洞"
+            elif [[ -s pip-audit.txt ]]; then
+              echo "❌ 核心依赖发现已知漏洞（门禁失败）："
+              echo
+              echo '```'
+              cat pip-audit.txt
+              echo '```'
+            else
+              echo "❌ 扫描未通过（门禁步骤 outcome: ${{ steps.gate.outcome }}），且无扫描输出可展示，请检查前置步骤日志。"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 补充：dev 工具依赖扫描（仅观察，不阻塞）───────────────────
+      # requirements-dev.txt 是区间声明的开发工具链，不随产品分发，
+      # 其漏洞不影响产品供应链 → continue-on-error，结果留在 artifact 中人工跟进。
+      # if: always()：观察态独立于门禁结果，核心依赖扫描失败时仍产出 dev 报告。
+      - name: Audit dev dependencies (report-only)
+        if: always()
+        continue-on-error: true
+        run: |
+          # 同门禁步骤：pipefail 保证发现漏洞时 outcome 如实反映失败，
+          # artifact 中的 dev 报告内容完整（continue-on-error 再抹掉步骤状态）
+          set -o pipefail
+          pip-audit --strict -r requirements-dev.txt 2>&1 | tee pip-audit-dev.txt
+
+      # fork PR 的 token 无 security-events 写权限，上传必然失败 → 跳过；
+      # 内部 PR / push / schedule / 手动触发正常上传到 Code Scanning。
+      # continue-on-error：上传失败（未开通 Advanced Security、API 抖动等）
+      # 不应把审计本身通过的运行变红；SARIF 已在 artifact 中留档。
+      - name: Upload SARIF to Code Scanning
+        if: >-
+          always() &&
+          (github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository)
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: pip-audit.sarif
+          category: pip-audit
+
+      # 无论成功失败都留档：SARIF、核心扫描与 dev 观察的文本输出
+      - name: Upload audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pip-audit-report
+          path: |
+            pip-audit.sarif
+            pip-audit.txt
+            pip-audit-dev.txt
+          if-no-files-found: ignore

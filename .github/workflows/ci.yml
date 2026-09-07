@@ -1,0 +1,335 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      run_webkit:
+        description: 'Run the optional WebKit E2E job (non-blocking)'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, py${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      # opencv-python-headless 的 wheel 不链接 libGL，无需 apt 安装系统库
+      # （见 pyproject.toml [project] dependencies 注释）；windows/macOS runner 也无 apt。
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # mcp extra 使 mcp_server 可在主矩阵导入：其测试激活后才能被
+          # fail_under=80 的门禁真实度量（M-12 修复）；webui/app 无需重依赖。
+          pip install -e ".[mcp]"
+          pip install -r requirements-dev.txt
+
+      # 覆盖率门槛（fail_under = 80）来自 .coveragerc：pytest-cov 在总覆盖率
+      # 低于门槛时以非零码退出，本步骤即门禁；下方 coverage report 同样受
+      # fail_under 约束，双重兜底。omit 掉的 3 个可选 extras 模块由 extras job
+      # 以硬门槛（.coveragerc-extras fail_under=50 + 逐模块下限）度量。
+      - name: Run tests with coverage
+        run: >
+          python -m pytest tests/ -v --tb=short
+          --cov=flashgaze
+          --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+
+      # 只在一条矩阵腿上写摘要，避免 12 份重复表格
+      - name: Write coverage to job summary
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        run: python -m coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: warn
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: ${{ matrix.os }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      # M-17：裸跑 pytest 默认口径校验——空参收集不得出现 e2e/benchmarks 的
+      # 测试节点 ID（含 "::" 形态，兼容无 e2e 依赖时 importorskip 跳过的输出），
+      # 防止 pyproject addopts/testpaths 默认过滤被悄悄回退（collect-only 秒级）。
+      - name: Bare pytest default gate (collect-only)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        run: |
+          python -m pytest --collect-only -q > /tmp/bare-collect.txt
+          ! grep -q "tests/e2e/.*::" /tmp/bare-collect.txt
+          ! grep -q "benchmarks/.*::" /tmp/bare-collect.txt
+
+  # ── 静态类型检查（mypy）─────────────────────────────────────────
+  # 与 test 并行、阻塞主流程。目标版本语义由 pyproject [tool.mypy] 的
+  # python_version 固定，单腿即可，无需进测试矩阵；本地等价命令：python -m mypy。
+  typecheck:
+    name: mypy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: 'pip'
+
+      # 只装基础依赖：可选 extras（gradio/mcp/piexif 等）由 pyproject 的
+      # mypy overrides 以 ignore_missing_imports 处理，保证本地最小环境
+      # 与 CI 跑出同一份结果（检查范围由配置 files=["flashgaze"] 提供）
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements-dev.txt
+
+      - name: Run mypy
+        run: python -m mypy
+
+  # ── 代码规范检查（ruff：lint + 格式化）──────────────────────────
+  # 与 test/typecheck 并行、阻塞主流程。纯静态分析无需安装项目依赖
+  # （opencv 等），只装 lint 工具链；目标版本语义由 pyproject [tool.ruff]
+  # 的 target-version 固定，单腿即可，无需进测试矩阵。
+  # 本地等价命令：python -m ruff check . && python -m ruff format --check .
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: 'pip'
+
+      - name: Install lint toolchain
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run ruff check
+        run: python -m ruff check .
+
+      - name: Check formatting
+        run: python -m ruff format --check .
+
+  # ── 可选模块严格模式开关（读取 sentinel）────────────────────────────
+  # extras job 自 M-12 修复起默认即阻塞（Coverage gate (hard floors) 硬门槛）。
+  # 当可选模块健康度劣化达到临界点时，extras-health.yml 定时任务会在仓库写入
+  # .github/extras-strict.lock；本 job 检出后判断该标记是否存在，输出 strict=true
+  # → 下方 extras job 的 strict 步骤把 5 模块总下限在 50% 基础上加严到 60
+  # （治理 R1 告警线），强制开发者修复直至恢复达标（R5）。
+  check-strict:
+    name: extras strict-mode check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      strict: ${{ steps.detect.outputs.strict }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Detect sentinel lock
+        id: detect
+        run: |
+          if [ -f .github/extras-strict.lock ]; then
+            echo "strict=true"  >> "$GITHUB_OUTPUT"
+            echo "::notice::检测到 .github/extras-strict.lock，extras 校验临时升级为阻塞合并"
+          else
+            echo "strict=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  extras:
+    name: extras (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: [test, check-strict]
+    runs-on: ${{ matrix.os }}
+    # 阻塞 job（M-12 修复）：下方 Coverage gate (hard floors) 步骤必须能真实
+    # 失败才能拦住可选模块覆盖率劣化。夜间 sentinel 锁
+    # （.github/extras-strict.lock）保留为加严升级机制：锁存在时 strict 步骤
+    # 把 5 模块总下限抬到 60（治理 R1 告警线），强制修复直至恢复达标。
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false        # 单腿失败不取消其他腿
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.12"]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies (with safe extras)
+        run: |
+          python -m pip install --upgrade pip
+          # 安装全部「安全」可选依赖以覆盖 5 个可选模块；portrait（face_recognition）
+          # 依赖 dlib，安装较重；本 job 现为阻塞门禁（M-12），安装失败会阻塞合并。
+          pip install -e ".[cv-enhanced,dedup,vlm-multi,gui,exif,xlsx,portrait]"
+          pip install "mcp>=1.2.0,<2.0.0"   # mcp 版本钉死
+          pip install -r requirements-dev.txt   # 测试工具链（pytest/pytest-cov）；pytest 唯一来源，必装否则 pytest 步骤失败
+
+      # 度量 5 个可选模块（.coveragerc-extras source 限定其清单；--cov=flashgaze
+      # 使数据含全包，供下方逐模块 --include 门禁使用）。可选模块测试自身的
+      # 不稳定由本步级 continue-on-error 兜底不阻塞；覆盖率门禁由下方
+      # hard floors 步骤无条件强制（M-12 修复）。
+      - name: Run tests with coverage
+        continue-on-error: true
+        run: >
+          python -m pytest tests/ -v --tb=short
+          --cov=flashgaze
+          --cov-config=.coveragerc-extras
+          --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+
+      # 覆盖率硬门禁（无条件执行、阻塞合并；M-12 修复）：第一行为 5 个可选
+      # 模块的总下限（fail_under=50 来自 .coveragerc-extras），其余为逐模块
+      # 下限（按 2026-09-06 实测基线 int(rate)-5 冻结，见
+      # docs/plans/覆盖率门禁纳入主门槛与extras硬门槛修复计划.md 实测表），
+      # 由 tests/test_coverage_gate_contract.py 锁定防退化。
+      - name: Coverage gate (hard floors)
+        if: always()
+        run: |
+          python -m coverage report --rcfile=.coveragerc-extras --include="flashgaze/mcp_server.py,flashgaze/webui/app.py,flashgaze/core/xlsx_exporter.py,flashgaze/core/deduplicator.py,flashgaze/core/portrait_engine.py"
+          python -m coverage report --rcfile=.coveragerc-extras --include="flashgaze/mcp_server.py" --fail-under=82
+          python -m coverage report --rcfile=.coveragerc-extras --include="flashgaze/webui/app.py" --fail-under=80
+          python -m coverage report --rcfile=.coveragerc-extras --include="flashgaze/core/xlsx_exporter.py" --fail-under=95
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-extras-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: coverage.xml
+          if-no-files-found: warn
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: extras-${{ matrix.os }}
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+      # 严格模式加严门禁（仅当 sentinel 锁存在，strict=true）：在上方无条件
+      # hard floors 之上，把 5 个可选模块总下限抬到 60（治理 R1 告警线），
+      # 强制开发者修复直至恢复达标（R5）。默认（strict=false）跳过。
+      - name: Strict coverage gate (only when locked)
+        if: needs.check-strict.outputs.strict == 'true'
+        run: python -m coverage report --fail-under=60 --rcfile=.coveragerc-extras --include="flashgaze/mcp_server.py,flashgaze/webui/app.py,flashgaze/core/xlsx_exporter.py,flashgaze/core/deduplicator.py,flashgaze/core/portrait_engine.py"
+
+  # ── 浏览器端到端（Playwright：Chromium + Firefox）──────────────
+  # 阻塞主流程：WebUI 的离线评分流程确定性高（无 VLM 网络调用），适合作为
+  # 门禁。组件级测试（tests/test_webui_components.py）已随 extras job 运行，
+  # 本 job 专门跑浏览器级 tests/e2e；依赖 gui+xlsx extras。
+  # 浏览器矩阵：chromium（默认/首条腿，行为与原配置完全一致）+ firefox（必选
+  # 第二项），fail-fast=false 使两浏览器并行且任一失败均阻断合并。WebKit 不在此
+  # 门禁内，见下方可选的 e2e-webkit job。
+  # 本地等价命令（逐浏览器）：
+  #   pip install -e ".[gui,xlsx]" -r requirements-dev.txt -r requirements-e2e.txt
+  #   python -m playwright install <browser> --with-deps   # windows/macOS 去掉 --with-deps
+  #   python -m pytest tests/e2e -m "e2e" -v --browser <browser>
+  # （-m "e2e" 覆盖 pyproject addopts 的默认过滤 -m "not e2e"，见 M-17）
+  e2e:
+    name: e2e (playwright, ${{ matrix.browser }})
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[gui,xlsx]"
+          pip install -r requirements-dev.txt
+          pip install -r requirements-e2e.txt
+
+      - name: Install ${{ matrix.browser }} for Playwright
+        run: python -m playwright install ${{ matrix.browser }} --with-deps
+
+      - name: Run E2E tests
+        run: python -m pytest tests/e2e -m "e2e" -v --tb=short --browser ${{ matrix.browser }}
+
+  # ── 浏览器端到端（Playwright：WebKit，可选）────────────────────
+  # 非门禁：仅当手动触发 workflow_dispatch 且勾选 run_webkit 时运行，
+  # continue-on-error 保证即使失败也不阻塞合并；默认（push/PR）不触发。
+  # 本地亦可手动验证：python -m playwright install webkit &&
+  #   python -m pytest tests/e2e -m "e2e" -v --browser webkit
+  e2e-webkit:
+    name: e2e (playwright, webkit, optional)
+    needs: test
+    if: github.event_name == 'workflow_dispatch' && inputs.run_webkit
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[gui,xlsx]"
+          pip install -r requirements-dev.txt
+          pip install -r requirements-e2e.txt
+
+      - name: Install WebKit for Playwright
+        run: python -m playwright install webkit --with-deps
+
+      - name: Run E2E tests
+        run: python -m pytest tests/e2e -m "e2e" -v --tb=short --browser webkit

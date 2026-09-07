@@ -1,0 +1,107 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg-link/
+build/
+dist/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Testing
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# --- FlashGaze 扁平化补充 ---
+.mypy_cache/
+.ruff_cache/
+.pytest_tmp/
+.uploads/
+
+# WorkBuddy
+.workbuddy/
+
+# 本地计划与救援目录，不进仓库
+_plans/
+_rescued/
+
+# --- 版本控制初始化补充（2026-08） ---
+# 临时基准测试与噪声验证目录（104MB / 272KB，纯本地中间态）
+_tmp_bench/
+_tmp_noise_check/
+
+# 脚本生成的 HTML 报告，非源码（根目录锚定，避免误伤 docs/ 下手写页面）
+/flashgaze_analysis_report.html
+/flashgaze-diagnosis.html
+# 其余 4 个诊断 HTML（补充通配，避免重新生成后被误提交）
+/flashgaze_*.html
+# 一次性测试运行日志
+/_tmp_test_run.log
+
+# 重构 / 合并遗留副本
+*.bak
+*.orig
+*.rej
+
+# uv 相关缓存（.venv/ 已在上方覆盖）
+.uv-cache/
+
+# 基准脚本生成的样本图，由 tools/bench/make_images.py 按固定种子重建，不入库
+tools/bench/images/
+tools/bench/small/
+
+# pytest-benchmark 本地运行历史（趋势历史由 CI 推送 gh-pages 承载，不入库）
+.benchmarks/
+# CI / 本地基准运行的 JSON 输出（--benchmark-json 产物）
+benchmark-*.json
+
+# --- Git 初始化补充（2026-09） ---
+# Agent / 工具状态目录（会话记忆、索引、插件缓存，纯本地态）
+.codebuddy/
+.mimosa/
+.zcode/
+.qoder/
+.review/
+.workbuddy-ai/
+.codegraph/
+.meituan-catpaw/
+
+# 代码审查产物一律不入库（根目录锚定，不误伤 docs/ 下手写页面）
+/docs/review/
+
+# 根目录一次性脚本与运行日志（保留在本地，仅不跟踪）
+/_cg_*.txt
+/_gen_*.py
+/_pytest_full.log
+/ocr_review_stderr.log
+/_tmp_*/
+/_tmp_*.log
+
+# 打包元数据备份目录（*.egg-info/ 匹配不到 .stash 后缀）
+*.egg-info.stash/
+
+# 运行期输出：EXIF 原子备份与撤销日志
+.flashgaze_backup/
+.flashgaze_undo/

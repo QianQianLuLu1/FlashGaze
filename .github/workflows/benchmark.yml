@@ -1,0 +1,212 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    # nightly 全量基准（含 bench_full）：UTC 18:00 ≈ 北京时间次日 02:00
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+    inputs:
+      full:
+        description: '包含 bench_full 全量批量基准（约多 1-2 分钟）'
+        type: boolean
+        default: false
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  # gh-pages 趋势数据推送（仅 main/nightly 实际写入；fork PR 的 token 天然只读）
+  contents: write
+  # PR 性能对比评论与告警
+  pull-requests: write
+
+env:
+  # mean 回归阈值：PR head 对比 merge-base 基线超出该比例即 CI 失败（单一调整点）
+  BENCH_FAIL_THRESHOLD: '15%'
+
+jobs:
+  benchmark:
+    name: benchmark (ubuntu, py3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # PR 同机对比需要 merge-base 历史
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      # 与 test job 同款安装：基准只测基础依赖路径（BRISQUE/cv-enhanced 等
+      # extras 不进基线，见 benchmarks/conftest.py 的 cv_engine_full 注释）。
+      # 环境固定单腿 ubuntu + py3.12：跨 OS/版本的耗时对比没有意义。
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements-dev.txt
+
+      # ── 基准语料缓存（bench_full 的 100 张大图）────────────────────
+      # tools/bench/images/ 由 tools/bench/make_images.py 生成（固定种子，
+      # 可复现），该目录已 gitignore。缓存 key 基于生成脚本内容哈希：
+      # 脚本不变 → 直接命中复用，省去每次约 10-20 秒的 JPEG 编码；
+      # 脚本变更 → key 失效 → 下一步重新生成并自动上传新缓存。
+      # restore-keys 提供前缀回退，脚本微调时仍可命中旧缓存做增量。
+      - name: Cache benchmark images
+        uses: actions/cache@v4
+        with:
+          path: tools/bench/images
+          key: bench-images-${{ runner.os }}-py3.12-${{ hashFiles('tools/bench/make_images.py') }}
+          restore-keys: |
+            bench-images-${{ runner.os }}-py3.12-
+
+      # 缓存未命中（首次或脚本变更）时生成图片；命中时脚本因文件已存在
+      # 而近乎瞬时覆盖写，开销极小。conftest 的 batch_full_dir 也以该目录
+      # 为唯一来源，本地无缓存时同样会自动兜底生成。
+      - name: Ensure benchmark images present
+        run: python tools/bench/make_images.py
+
+      # ── PR 同机自对比门禁 ──────────────────────────────────────────
+      # GitHub 托管 runner 每次可能分配到不同物理机，跨机对比噪声可达 10-20%，
+      # 会淹没 15% 的阈值。因此 PR 门禁在同一个 runner 上先跑 merge-base
+      # 基线、再跑 head，同机噪声 <5%，阈值才有区分力。
+      # 基准代码（benchmarks/）两次都用 head 版本，度量的正是实现差异。
+      # 本地等价命令见 docs/bench/README.md。
+      - name: Run baseline benchmarks at merge-base (PR only)
+        if: github.event_name == 'pull_request'
+        run: |
+          BASE_REF="${{ github.event.pull_request.base.ref }}"
+          git fetch origin "$BASE_REF"
+          BASE_SHA=$(git merge-base "origin/$BASE_REF" HEAD)
+          echo "merge-base: $BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/baseline" "$BASE_SHA"
+          # 秒级把 editable 安装切到基线代码；--no-deps 跳过依赖重装（两端相同）
+          pip install -e "$RUNNER_TEMP/baseline" --no-deps
+          python -m pytest benchmarks/ -m "not bench_full" \
+            --benchmark-disable-gc \
+            --benchmark-json="$RUNNER_TEMP/baseline.json"
+
+      - name: Run head benchmarks with regression gate
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            # 换回 head 代码，带阈值门禁：mean 超基线 15% → PerformanceRegression → 非零退出
+            pip install -e . --no-deps
+            COMPARE_ARGS=(
+              --benchmark-compare="$RUNNER_TEMP/baseline.json"
+              --benchmark-compare-fail="mean:$BENCH_FAIL_THRESHOLD"
+            )
+            MARKER_ARGS=(-m "not bench_full")
+          elif [[ "${{ github.event_name }}" == "schedule" || "${{ inputs.full }}" == "true" ]]; then
+            # nightly / 手动 full：包含 bench_full 全量批量基准
+            MARKER_ARGS=()
+            COMPARE_ARGS=()
+          else
+            # main push：quick 集，产出趋势数据
+            MARKER_ARGS=(-m "not bench_full")
+            COMPARE_ARGS=()
+          fi
+          set -o pipefail
+          python -m pytest benchmarks/ "${MARKER_ARGS[@]}" "${COMPARE_ARGS[@]}" \
+            --benchmark-disable-gc \
+            --benchmark-json=benchmark-head.json 2>&1 | tee bench-output.log
+
+      # 对比表（含 FAIL 标记与 delta）写入 Job Summary；tee 的完整日志也在
+      # Actions log 里可查
+      - name: Write comparison table to job summary
+        if: always()
+        run: |
+          [[ -f bench-output.log ]] || exit 0
+          {
+            echo "## 性能基准对比"
+            echo
+            echo '```'
+            sed -n '/benchmark: [0-9]* tests/,$p' bench-output.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 趋势跟踪（github-action-benchmark + gh-pages）──────────────
+      # PR 门禁由上面的同机自对比负责；本步骤对比的是 main 分支累积的历史
+      # 数据（跨机），只做趋势图表、Summary 对比表与 PR 告警评论，不设
+      # fail-threshold——跨机噪声不应再有失败权，避免双重门禁误报。
+      # 图表地址：https://<org>.github.io/FlashGaze/dev/bench/
+      #（需在仓库 Settings → Pages 启用 gh-pages 分支后才可访问，数据本身
+      #  无论是否启用 Pages 都在 gh-pages 分支的 dev/bench/ 下累积）
+      - name: Check gh-pages branch
+        id: ghpages
+        run: |
+          if git ls-remote --exit-code --heads origin gh-pages > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 首次 main push 时引导空 gh-pages 分支（趋势数据载体）。用临时 clone
+      # 操作，不动主 checkout——benchmark-head.json 还要交给下一步使用。
+      - name: Bootstrap gh-pages branch
+        if: >-
+          github.event_name != 'pull_request' &&
+          steps.ghpages.outputs.exists == 'false'
+        run: |
+          cd "$RUNNER_TEMP"
+          git clone --no-checkout \
+            "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" ghpages-init
+          cd ghpages-init
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan gh-pages
+          git commit --allow-empty -m "chore(gh-pages): bootstrap for benchmark trend data"
+          git push origin gh-pages
+
+      - name: Store results and update trend charts
+        uses: rhysd/github-action-benchmark@v1
+        # fork PR 的 token 只读，评论/推送会失败但不该让门禁（已通过）变红
+        continue-on-error: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork == true }}
+        with:
+          tool: 'pytest'
+          output-file-path: benchmark-head.json
+          benchmark-data-dir-path: dev/bench
+          gh-pages-branch: gh-pages
+          github-token: ${{ github.token }}
+          # 超过 main 历史基线 15% 时在 PR 评论告警（仅提醒，不失败）
+          alert-threshold: '115%'
+          comment-on-alert: true
+          comment-always: ${{ github.event_name == 'pull_request' }}
+          summary-always: true
+          # 仅 main push / nightly 累积数据；PR 不推。统一改手动推送（下一步）：
+          # action 不支持推送重试，与 extras-health charts 并发推 gh-pages 会被拒，
+          # 改由下一步在本地提交基础上 fetch + rebase + 退避重试。
+          auto-push: false
+          # gh-pages 尚未引导（仓库首批 PR）时跳过拉取历史数据
+          skip-fetch-gh-pages: ${{ steps.ghpages.outputs.exists != 'true' }}
+
+      # 手动重试推送：上一步已在本地 gh-pages 分支生成提交（仅 push/schedule 场景；
+      # PR 与 fork PR 行为不变，不进入本步骤）。被拒则同步远端最新 HEAD，
+      # rebase 后重试（最多 5 次）；两工作流写不同目录，rebase 无内容冲突。
+      - name: Push gh-pages with retry
+        if: github.event_name == 'push' || github.event_name == 'schedule'
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            if git push origin gh-pages:gh-pages; then
+              echo "gh-pages 推送成功（第 $attempt 次尝试）"
+              exit 0
+            fi
+            echo "::warning::gh-pages 推送被拒，同步最新远端后重试（第 $attempt 次）"
+            sleep $((attempt * 10))
+            git fetch --depth=50 origin gh-pages
+            if ! git rebase origin/gh-pages; then
+              git rebase --abort
+              echo "::error::gh-pages rebase 冲突，本次趋势数据推送中止，下一轮运行自愈"
+              exit 1
+            fi
+          done
+          echo "::error::gh-pages 推送在 5 次重试后仍失败"
+          exit 1

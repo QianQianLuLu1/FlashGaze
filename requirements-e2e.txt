@@ -1,0 +1,9 @@
+# E2E 测试依赖（浏览器级，tests/e2e/）
+# 前置：pip install -e ".[gui,xlsx]" -r requirements-dev.txt
+# 浏览器二进制：
+#   默认 / 必选门禁用 chromium；Firefox 为必选门禁第二项（--browser 切换）；
+#   WebKit 为可选（python -m playwright install webkit && pytest tests/e2e --browser webkit）。
+#   单浏览器：python -m playwright install <browser>
+#   多浏览器：python -m playwright install chromium firefox   （或追加 webkit）
+#   系统依赖（仅 Linux 需补）：python -m playwright install --with-deps <browser>
+pytest-playwright>=0.5,<2

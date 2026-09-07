@@ -1,0 +1,416 @@
+# FlashGaze 发布工作流（PyPI + GitHub Release）
+#
+# 触发方式：
+#   1. 推送版本标签：git tag vx.y.z && git push origin vx.y.z（标签须与
+#      flashgaze/__init__.py 的 __version__ 一致，preflight 会校验）
+#      ——这是唯一的真实发布路径（标签推送恒发布）
+#   2. Actions 页手动触发（workflow_dispatch）：恒为演练——执行构建、验证与
+#      供应链证明（attest）生成，不发布任何内容。手动触发时 github.ref 是分支
+#      （如 refs/heads/main），若允许发布会产生脏 Release / 脏 tag，因此发布路径
+#      刻意排除手动触发。
+#      dry_run 输入仅供手动演练时显式标记意图，不影响任何发布行为。
+#
+# 发布认证方式：
+#   本工作流使用 PyPI Trusted Publishing（OIDC）发布，无需任何仓库
+#   Secret。认证由 publish job 的 `id-token: write` 权限授予的短期
+#   OIDC 令牌自动完成。
+#   前提：须先在 PyPI 项目页 → Publishing 配置 Trusted Publisher，
+#   填入本仓库 URL 与 Workflow 文件名（release），详见 README 发布流程。
+#
+# 供应链证明（SLSA provenance + SBOM）：
+#   attest job 对 sdist + wheel 生成 Sigstore 签名证明（标签推送与手动演练
+#   都执行；生成证明不是发布）：
+#     1. SLSA Build Provenance —— 证明产物由本工作流在当前 commit 构建，
+#        存入仓库 Attestations 存储，bundle 归档为工作流产物；
+#     2. CycloneDX SBOM —— 干净 venv 安装 wheel 后提取的运行时依赖清单，
+#        以及把该清单与分发文件摘要绑定签名的 SBOM 证明。
+#   发布路径上经各侧官方机制发布：
+#     - PyPI：gh-action-pypi-publish 以 Trusted Publishing OIDC 身份按 PEP 740
+#       为每个分发文件现场签发并上传 Sigstore 证明（PyPI 页面 Provenance 区块
+#       展示签发工作流/仓库/触发事件），无需额外密钥；
+#     - GitHub Release：附带 provenance/SBOM 证明 bundle 与 SBOM 原件。
+#   发布后验证方式：
+#     - PyPI 项目页 → 文件详情 "Provenance" 区块；
+#     - gh attestation verify <dist 文件> --owner <仓库属主>（校验 GitHub 侧证明）；
+#     - Release 资产中的 flashgaze.sbom.cdx.json 可由 CycloneDX 兼容工具直接消费。
+#   前提：工件证明（artifact attestations）对公共仓库的全部 GitHub plan 可用；
+#   私有仓库需 GitHub Enterprise Cloud。
+#
+# 本地等价命令：
+#   python -m build; twine check --strict dist/*
+#
+# 失败行为矩阵（均只发生在标签推送的真实发布路径；手动演练恒不发布）：
+#   preflight / build / verify / attest 失败 → 尚未发布，无任何副作用，修复后重跑；
+#                                    attest 失败经依赖关系阻断 publish，
+#                                    保证「无证明不发布」
+#   publish（PyPI 上传）失败       → 下游 Release 不会创建；重跑整个工作流，
+#                                    注意同版本文件不可重传，重试前先在 PyPI
+#                                    确认已上传的文件（PEP 740 证明随文件在同一
+#                                    job 内上传，按同一口径重试）
+#   github-release 失败            → 此时 PyPI 已发布成功，无需动 PyPI，
+#                                    单独重跑 github-release job 即可（幂等）
+
+name: Release
+
+on:
+  push:
+    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  workflow_dispatch:
+    inputs:
+      # 仅供手动演练显式标记意图：手动触发恒为演练（构建+验证+证明生成，不发布），
+      # 该输入不影响任何发布行为；真实发布仅由标签推送触发。
+      dry_run:
+        description: '演练标记：手动触发恒为演练，只构建、验证与生成证明，不发布'
+        type: boolean
+        default: true
+
+concurrency:
+  # 发布中途绝不取消，避免半发布态（PyPI 已传一半 / Release 只建一半）
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+# 顶层最小权限（contents: read）；仅以下 job 按需提升：
+#   attest         → id-token/attestations: write（Sigstore 签名与证明存储必需）
+#   publish        → id-token: write（OIDC Trusted Publishing 必需）
+#   github-release → contents: write（创建 Release 与上传资产）
+permissions:
+  contents: read
+
+jobs:
+  # ── 发布前置校验 ────────────────────────────────────────────────
+  # 校验标签与包版本一致（唯一版本源：flashgaze/__init__.py 的 __version__）。
+  # 注：OIDC Trusted Publishing 不依赖任何仓库 Secret，故无密钥检查步骤。
+  preflight:
+    name: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      # 用 ast 解析提取 __version__，不 import 包（避免拉起运行时依赖）；
+      # 仅标签推送事件比对标签名与版本，手动触发时跳过比对、版本号仍输出。
+      - name: Validate tag matches package version
+        id: version
+        env:
+          # 上下文表达式经步骤级 env 中转，避免标签名等不可信文本被内联进
+          # run 脚本造成命令注入（恶意标签名可含 $、() 等元字符）
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          V="$(python -c "import ast; \
+          src = open('flashgaze/__init__.py', encoding='utf-8').read(); \
+          node = next(n for n in ast.parse(src).body \
+              if isinstance(n, ast.Assign) and \
+              any(isinstance(t, ast.Name) and t.id == '__version__' for t in n.targets)); \
+          print(ast.literal_eval(node.value))")"
+          echo "package version: $V"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "push" ]; then
+            TAG_VERSION="${TAG_NAME#v}"
+            if [ "$TAG_VERSION" != "$V" ]; then
+              echo "::error::标签 $TAG_NAME 与包版本 $V 不一致：请同步更新 flashgaze/__init__.py 的 __version__ 后重新打标签"
+              exit 1
+            fi
+            echo "标签与包版本一致：$V"
+          else
+            echo "手动触发，跳过标签比对"
+          fi
+
+  # ── 构建与产物校验 ──────────────────────────────────────────────
+  # python -m build 产出 sdist + wheel，twine check --strict 校验，
+  # 再断言关键 package-data 在产物内、干净 venv 冒烟安装后版本号一致。
+  build:
+    name: build
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: Install build toolchain
+        run: |
+          python -m pip install --upgrade pip
+          pip install build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Validate distributions
+        run: twine check --strict dist/*
+
+      # 防 pyproject.toml package-data 回归的防线：离线评分依赖随包分发的
+      # BRISQUE 模型文件与 py.typed，任一缺失即发布事故，这里直接红败。
+      - name: Assert packaged data files
+        run: |
+          set -euo pipefail
+          REQUIRED="flashgaze/models/brisque/brisque_model_live.yml
+          flashgaze/models/brisque/brisque_range_live.yml
+          flashgaze/py.typed"
+          WHEEL_LIST="$(unzip -l dist/*.whl)"
+          echo "$WHEEL_LIST"
+          MISSING=""
+          for f in $REQUIRED; do
+            if ! grep -q "$f" <<< "$WHEEL_LIST"; then
+              MISSING="$MISSING $f"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::wheel 缺少必需文件:$MISSING（检查 pyproject.toml package-data）"
+            exit 1
+          fi
+          echo "wheel 包含全部关键 package-data"
+          # sdist 同类抽查（条目带版本前缀目录，按子串匹配即可）
+          SDIST_LIST="$(tar -tzf dist/*.tar.gz)"
+          MISSING=""
+          for f in $REQUIRED; do
+            if ! grep -q "$f" <<< "$SDIST_LIST"; then
+              MISSING="$MISSING $f"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "::error::sdist 缺少必需文件:$MISSING"
+            exit 1
+          fi
+          echo "sdist 包含全部关键 package-data"
+
+      # 干净 venv 冒烟：从构建产物安装而非源码，验证 wheel 真实可装可跑
+      - name: Smoke test wheel in clean venv
+        env:
+          # 期望版本经 env 中转，不内联进脚本（与 preflight 同样的防注入约定）
+          EXPECTED_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          set -euo pipefail
+          python -m venv /tmp/smoke-venv
+          /tmp/smoke-venv/bin/pip install --upgrade pip
+          /tmp/smoke-venv/bin/pip install dist/*.whl
+          OUT="$(/tmp/smoke-venv/bin/flashgaze --version)"
+          echo "flashgaze --version: $OUT"
+          if ! grep -q "$EXPECTED_VERSION" <<< "$OUT"; then
+            echo "::error::冒烟版本不一致：期望包含 $EXPECTED_VERSION，实际输出 '$OUT'"
+            exit 1
+          fi
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # ── 快集测试兜底 ────────────────────────────────────────────────
+  # 与 build 并行。只跑非 slow / 非 e2e 的快集：完整测试矩阵与 e2e 已由
+  # 打标签前的 main CI 门禁（ci.yml）保证，此处不重复烧时间。
+  verify:
+    name: verify
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements-dev.txt
+
+      # 快集兜底；完整矩阵与 e2e 由打标签前的 main CI 门禁
+      - name: Run fast test subset
+        run: python -m pytest tests/ -m "not slow and not e2e" -q
+
+  # ── 供应链证明：SLSA provenance + SBOM ──────────────────────────
+  # 对 build 产出的 sdist + wheel 生成 Sigstore 签名证明，标签推送与手动演练
+  # 都执行（生成证明不属于发布；演练路径提前暴露签名链路问题）：
+  #   1. SLSA Build Provenance —— 证明产物由本工作流在当前 commit 构建；
+  #   2. CycloneDX SBOM —— 干净 venv 安装 wheel 后的运行时依赖清单，
+  #      外加把 SBOM 与分发文件摘要绑定签名的证明。
+  # 证明存入仓库 Attestations 存储；bundle 与 SBOM 原件归档为产物，
+  # 供下游 publish / github-release 使用。验证方式见文件头「供应链证明」节。
+  attest:
+    name: attest (SLSA provenance + SBOM)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # id-token: write     → 铸造 OIDC 令牌，换取 Sigstore 短期签名证书
+    # attestations: write → 将证明持久化到仓库 Attestations 存储
+    permissions:
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: 'pip'
+
+      # SBOM 以「用户真实安装的环境」为准：干净 venv 安装 wheel 后用
+      # cyclonedx-py 提取完整运行时依赖图（CycloneDX JSON，默认按规范校验）。
+      # cyclonedx-bom 装在 runner 环境而非被测 venv，避免把自身写进清单；
+      # 钉住版本保证 SBOM 工具可复现，升级由 dependabot 月度提案评审处理。
+      - name: Generate CycloneDX SBOM from installed wheel
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install cyclonedx-bom==7.3.1
+          python -m venv /tmp/sbom-venv
+          /tmp/sbom-venv/bin/pip install --upgrade pip
+          /tmp/sbom-venv/bin/pip install dist/*.whl
+          mkdir -p sbom
+          cyclonedx-py environment /tmp/sbom-venv \
+            --output-file sbom/flashgaze.sbom.cdx.json \
+            --output-reproducible
+          # 合理性检查：SBOM 必须是合法 JSON 且包含 flashgaze 自身，
+          # 防止工具升级回归产出空清单而无人察觉
+          python - <<'PY'
+          import json
+          with open('sbom/flashgaze.sbom.cdx.json', encoding='utf-8') as fh:
+              bom = json.load(fh)
+          names = sorted({c.get('name') for c in bom.get('components', [])})
+          assert 'flashgaze' in names, f"SBOM 缺少 flashgaze 组件: {names}"
+          print(f"SBOM 合法，共 {len(names)} 个组件")
+          PY
+
+      # SLSA Build Provenance：subject 为两个分发文件；未提供 sbom-path /
+      # predicate 时自动生成 SLSA 构建来源谓词。钉完整 commit SHA 防供应链漂移
+      # （对应 v4 标签，官方已以 actions/attest 统一替代 attest-build-provenance
+      # / attest-sbom）；升级时同步更新 SHA 与行尾注释。
+      - name: Attest build provenance (SLSA)
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4
+        with:
+          subject-path: 'dist/*'
+
+      # SBOM 证明：把上面的 CycloneDX 清单与同一组分发文件摘要绑定签名。
+      - name: Attest SBOM
+        id: sbom-attest
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4
+        with:
+          subject-path: 'dist/*'
+          sbom-path: 'sbom/flashgaze.sbom.cdx.json'
+
+      # 汇总两个 Sigstore bundle 与 SBOM 原件，供归档与下游 job 使用。
+      # bundle 路径经 env 中转，保持与本工作流其他步骤一致的防注入约定。
+      - name: Collect attestation bundles
+        env:
+          PROVENANCE_BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+          SBOM_BUNDLE: ${{ steps.sbom-attest.outputs.bundle-path }}
+        run: |
+          set -euo pipefail
+          mkdir -p attestations
+          cp "$PROVENANCE_BUNDLE" attestations/provenance.sigstore.json
+          cp "$SBOM_BUNDLE" attestations/sbom.sigstore.json
+          ls -l attestations sbom
+
+      - name: Upload attestation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: attestations
+          path: |
+            attestations/provenance.sigstore.json
+            attestations/sbom.sigstore.json
+            sbom/flashgaze.sbom.cdx.json
+          if-no-files-found: error
+
+  # ── 发布到 PyPI ─────────────────────────────────────────────────
+  publish:
+    name: publish (PyPI)
+    needs: [build, verify, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # id-token: write 是 OIDC Trusted Publishing 认证必需权限：
+    # 授予的短期 OIDC 令牌由 pypa/gh-action-pypi-publish 自动换取 PyPI 凭据。
+    permissions:
+      id-token: write
+    # 真实发布仅由标签推送触发：手动触发时 github.ref 是分支，若在此发布
+    # 会以分支名创建脏 Release / 脏 tag；手动触发恒为演练（只走到 build/verify/attest）
+    if: github.event_name == 'push'
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      # OIDC Trusted Publishing：不传 password，action 自动用本 job 持有的
+      # id-token: write 权限换取短期 PyPI 凭据完成发布。
+      # 上传失败则本 job 红败、下游 Release 不会创建。
+      # 注意：同版本文件不可重传——重试前先在 PyPI 确认已上传的文件。
+      # 钉完整 commit SHA 防供应链漂移（对应 release/v1 分支）；
+      # 升级时同步更新 SHA 与行尾注释。
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33  # release/v1
+        with:
+          # PEP 740 证明：action 以本 job 的 OIDC 身份为每个分发文件现场签发
+          # Sigstore 证明并随文件一并上传，发布后在 PyPI 页面 "Provenance"
+          # 区块展示。当前钉住版本默认即为 true，显式声明以防上游默认值变化；
+          # 如需关闭须同步评估供应链安全策略。
+          attestations: true
+
+  # ── 创建 GitHub Release ─────────────────────────────────────────
+  github-release:
+    name: github-release
+    needs: [publish, preflight, attest]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # 仅本 job 提升权限，用于创建 Release 与上传资产
+    # 与 publish 相同：真实发布仅由标签推送触发（手动触发恒为演练）
+    if: github.event_name == 'push'
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      # attest job 生成的证明 bundle 与 SBOM 原件，随分发文件一并作为 Release 资产
+      - name: Download attestation artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: attestations
+          path: proofs
+
+      # 该 action 幂等：失败可单独重跑此 job；此时 PyPI 已发布成功，
+      # 无需动 PyPI。钉完整 commit SHA 防供应链漂移（对应 v2 标签）；
+      # 升级时同步更新 SHA 与行尾注释。
+      # 资产 = sdist/wheel + provenance/SBOM 证明 bundle（Sigstore）+ CycloneDX SBOM。
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: FlashGaze ${{ needs.preflight.outputs.version }}
+          generate_release_notes: true
+          files: |
+            dist/*
+            proofs/attestations/*.sigstore.json
+            proofs/sbom/*.cdx.json

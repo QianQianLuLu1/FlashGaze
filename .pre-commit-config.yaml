@@ -1,0 +1,49 @@
+# FlashGaze 本地代码质量守护（pre-commit）
+#
+# 在 `git commit` 时自动运行 ruff（lint + 格式化检查）与 mypy（静态类型检查），
+# 行为与 CI 的 lint / typecheck job 完全一致：
+#   - python -m ruff check .
+#   - python -m ruff format --check .
+#   - python -m mypy
+#
+# 采用 repo: local，直接复用开发者已安装 requirements-dev.txt 的虚拟环境
+# （ruff>=0.16,<0.17 / mypy>=1.11,<2 / types-requests>=2.31,<3），因此规则与
+# 版本完全来自 pyproject.toml 的 [tool.ruff] / [tool.mypy]，无需在此重复声明，
+# 也不会出现与 CI 的版本漂移。
+#
+# 安装（在仓库根，即 pyproject.toml 所在目录执行）：
+#   pip install -r requirements-dev.txt
+#   pre-commit install
+#
+# 手动对全部文件运行（等价于 CI）：
+#   pre-commit run --all-files
+
+repos:
+  # ── ruff：lint 检查 ──────────────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check (lint)
+        entry: python -m ruff check .
+        language: system
+        pass_filenames: false   # 让 ruff 按 pyproject 的 extend-exclude 全量检查
+        always_run: true
+        types: [python]
+
+  # ── ruff：格式化检查（与 CI 一致，只检查不自动修复）──────────────
+      - id: ruff-format
+        name: ruff format --check
+        entry: python -m ruff format --check .
+        language: system
+        pass_filenames: false
+        always_run: true
+        types: [python]
+
+  # ── mypy：静态类型检查 ───────────────────────────────────────────
+      - id: mypy
+        name: mypy (type check)
+        entry: python -m mypy
+        language: system
+        pass_filenames: false   # 由 [tool.mypy] files=["flashgaze","tests"] 决定范围
+        always_run: true
+        types: [python]
