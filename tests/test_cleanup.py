@@ -27,6 +27,7 @@ from flashgaze.core.cleanup import (
     CleanupError,
     classify_and_delete,
     exclusion_dirs,
+    is_within_directory,
     pending_fingerprint,
     restore_from_manifest,
     run_cleanup,
@@ -2086,3 +2087,73 @@ def test_kept_unevaluated_schema_unchanged(tmp_path: Path) -> None:
     assert "工作空间外" in blocked["reason"]
     assert blocked["path"] == str(ws / ".." / "outside.jpg")
     assert outside.exists()
+
+
+# ── is_within_directory 直接单元测试（安全护栏检查点 B 基础）──
+
+
+def test_is_within_directory_file_inside(tmp_path: Path) -> None:
+    """文件在目录内 → True（基本路径）。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    f = ws / "img.jpg"
+    f.write_text("x")
+    assert is_within_directory(f, ws) is True
+
+
+def test_is_within_directory_file_outside(tmp_path: Path) -> None:
+    """文件在目录外 → False。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    outside = tmp_path / "outside.jpg"
+    outside.write_text("x")
+    assert is_within_directory(outside, ws) is False
+
+
+def test_is_within_directory_root_itself(tmp_path: Path) -> None:
+    """目录自身 resolve 后等于 root → True（relative_to 允许空相对路径）。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    assert is_within_directory(ws, ws) is True
+
+
+def test_is_within_directory_dotdot_resolves_inside(tmp_path: Path) -> None:
+    """含 .. 的路径 resolve 后仍在目录内 → True（不拦截常规 .. 穿越）。"""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "sub").mkdir()
+    # ws/sub/../img.jpg resolve 后 = ws/img.jpg，仍在 ws 内
+    tricky = ws / "sub" / ".." / "img.jpg"
+    assert is_within_directory(Path(str(tricky)), ws) is True
+
+
+def test_is_within_directory_symlink_escape_blocked(tmp_path: Path) -> None:
+    """符号链接 resolve 后指向 workspace 外 → False（检查点 B 拦截链接逃逸）。
+
+    这是 AGENTS.md 2.4 节记录的核心安全护栏：符号链接逃逸解析后指向 workspace 外，
+    relative_to 校验必须阻止。
+    """
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    outside_dir = tmp_path / "outside_dir"
+    outside_dir.mkdir()
+    target = outside_dir / "secret.jpg"
+    target.write_text("secret")
+    link = ws / "link.jpg"
+    try:
+        os.symlink(target, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("当前环境无符号链接创建权限（Windows 需开发者模式/管理员），未验证")
+
+    # resolve() 跟随链接到 workspace 外的目标 → relative_to 失败 → False
+    assert is_within_directory(link, ws) is False
+
+
+def test_is_within_directory_nested_inside(tmp_path: Path) -> None:
+    """多层嵌套子目录内的文件 → True。"""
+    ws = tmp_path / "ws"
+    deep = ws / "a" / "b" / "c"
+    deep.mkdir(parents=True)
+    f = deep / "img.jpg"
+    f.write_text("x")
+    assert is_within_directory(f, ws) is True

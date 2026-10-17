@@ -10,6 +10,7 @@
 #   make format-check  检查格式化是否合规（python -m ruff format --check .）
 #   make typecheck     运行 mypy（python -m mypy）
 #   make check         完整本地守护：lint + format-check + typecheck
+#   make verify        一键完整验证：check + test（lint + format-check + typecheck + test）
 #   make test          运行测试（python -m pytest tests/ -q；默认口径自动排除 e2e，见 pyproject addopts）
 #   make test-all      全量测试（-o addopts= 解除默认过滤，含 e2e；无 e2e 依赖时自动跳过）
 #   make hooks         对所有文件运行 pre-commit（等价于 CI 全量预检）
@@ -20,7 +21,7 @@
 # dist 目标会自行安装 build/twine：发布工具与开发工具链分离，
 # 故不写入 requirements-dev.txt。
 
-.PHONY: install lint format format-check typecheck test test-all check hooks dist
+.PHONY: install lint format format-check typecheck test test-all check verify hooks dist
 
 install:
 	pip install -r requirements-dev.txt
@@ -39,6 +40,8 @@ typecheck:
 	python -m mypy
 
 check: lint format-check typecheck
+
+verify: check test
 
 # -o addopts= 清空 pyproject [tool.pytest.ini_options] addopts 的默认过滤
 # （-m "not e2e"，M-17），使 e2e 也被收集；无 e2e 依赖时 conftest importorskip

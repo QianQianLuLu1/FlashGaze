@@ -152,6 +152,29 @@ jobs:
       - name: Check formatting
         run: python -m ruff format --check .
 
+  # ── AGENTS.md 完整性检查（跨会话项目上下文守护）────────────────────
+  # F3 fix：强制 AGENTS.md 存在且包含必要章节（1-9 节），作为 Qoder Agent
+  # 每次会话开始时自动读取的跨会话项目上下文载体。与 lint/typecheck 并行、
+  # 阻塞主流程。纯标准库检查，无需安装项目依赖。
+  # 本地等价命令：python -m tools.check_agents_md
+  agents-md-integrity:
+    name: AGENTS.md integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: 'pip'
+
+      # 纯标准库脚本，无需安装任何依赖
+      - name: Check AGENTS.md integrity
+        run: python -m tools.check_agents_md
+
   # ── 可选模块严格模式开关（读取 sentinel）────────────────────────────
   # extras job 自 M-12 修复起默认即阻塞（Coverage gate (hard floors) 硬门槛）。
   # 当可选模块健康度劣化达到临界点时，extras-health.yml 定时任务会在仓库写入

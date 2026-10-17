@@ -1,10 +1,12 @@
 # FlashGaze 本地代码质量守护（pre-commit）
 #
-# 在 `git commit` 时自动运行 ruff（lint + 格式化检查）与 mypy（静态类型检查），
-# 行为与 CI 的 lint / typecheck job 完全一致：
+# 在 `git commit` 时自动运行 ruff（lint + 格式化检查）、mypy（静态类型检查）
+# 与 AGENTS.md 完整性检查，行为与 CI 的 lint / typecheck / agents-md-integrity
+# job 完全一致：
 #   - python -m ruff check .
 #   - python -m ruff format --check .
 #   - python -m mypy
+#   - python -m tools.check_agents_md（AGENTS.md 存在性 + 必要章节检查）
 #
 # 采用 repo: local，直接复用开发者已安装 requirements-dev.txt 的虚拟环境
 # （ruff>=0.16,<0.17 / mypy>=1.11,<2 / types-requests>=2.31,<3），因此规则与
@@ -19,6 +21,22 @@
 #   pre-commit run --all-files
 
 repos:
+  # ── AGENTS.md 完整性检查（跨会话项目上下文守护）────────────────
+  # F3 fix：强制 AGENTS.md 存在且包含必要章节（1-9 节），作为 Qoder Agent
+  # 每次会话开始时自动读取的跨会话项目上下文导航入口。
+  # 同时检查 docs/agent-context/ 作用域文档存在（architecture/pitfalls/fixes/release）。
+  # 检查脚本：tools/check_agents_md.py
+  # 本地等价命令：python -m tools.check_agents_md
+  - repo: local
+    hooks:
+      - id: agents-md-exists
+        name: AGENTS.md integrity check
+        entry: python -m tools.check_agents_md
+        language: system
+        pass_filenames: false
+        always_run: true
+        files: ^AGENTS\.md$
+
   # ── ruff：lint 检查 ──────────────────────────────────────────────
   - repo: local
     hooks:
