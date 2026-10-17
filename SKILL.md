@@ -4,10 +4,10 @@ description: >-
   AI 辅助图片评分与筛选工具。当用户需要评估本地图片质量、批量打分、
   筛选高质量照片、从图片目录中选出最佳图片时使用此技能。
   支持四种工作模式：目录批量评分（CLI/MCP）、上传图片列表评分（MCP）、
-  工作空间原地清理（MCP `cleanup_workspace_images`）、CLI 工作空间清理（`flashgaze cleanup`）。
+  工作空间原地清理（MCP `cleanup_workspace_images`）、CLI 工作空间清理与回滚（`flashgaze cleanup` / `flashgaze restore`）。
   CV 客观评分（清晰度+曝光度）与 VLM 场景补偿混合评分，
-  支持可选 CV 增强维度：噪点（BRISQUE）、色彩丰富度、人像专项、PHash 去重，
-  全部默认关闭，按需通过 --enable-noise / --enable-color / --enable-portrait / --enable-dedup 启用。
+  支持可选 CV 增强维度：构图（实验性）、噪点（BRISQUE）、色彩丰富度、人像专项、PHash 去重，
+  全部默认关闭，按需通过 --enable-composition / --enable-noise / --enable-color / --enable-portrait / --enable-dedup 启用。
   VLM 层默认经内置 pin-IP 直连层接入多提供商（qwen / openai / anthropic / ollama），无厂商专属适配代码，litellm 仅为可选 opt-in 后端；
   支持场景化评分（--scene auto/portrait/landscape/still_life）与评分可解释性（vlm_reason / vlm_provider 字段）。
   输出结构化 JSON/CSV 结果。工作空间清理模式有严格路径安全护栏，绝不影响目录外文件。
@@ -54,8 +54,8 @@ metadata:
 |---|---|---|
 | **目录评分** | 对某个目录下所有图片评分 | CLI 或 MCP `score_images` |
 | **上传评分** | 对指定路径列表的图片评分（不依赖目录结构） | MCP `score_uploaded_images` |
-| **工作空间清理（MCP）** | 评分后原地删除低分图，仅限工作空间内 | MCP `cleanup_workspace_images` |
-| **工作空间清理（CLI）** | 纯命令行场景：评分后原地删除低分图，默认 dry-run | `flashgaze cleanup <目录>` |
+| **工作空间清理（MCP）** | 评分后原地移除低分图（进 `.flashgaze_deleted/` 回收站），仅限工作空间内 | MCP `cleanup_workspace_images` |
+| **工作空间清理（CLI）** | 纯命令行场景：评分后移除低分图，默认 dry-run，可回滚 | `flashgaze cleanup <目录>`；回滚 `flashgaze restore <审计清单>` |
 
 ## 前置安装
 
@@ -132,28 +132,47 @@ score_single_image(image_path="C:/photos/img1.jpg", no_vlm=True)
 
 - **仅删除 workspace 目录内的文件**，绝不影响目录外任何资料
 - **双重路径穿越检查**：解析真实路径后用 `relative_to` 校验，防止 `../` 或符号链接逃逸
-- **默认 dry_run=True**：先试运行确认要删除哪些文件，确认后设 `dry_run=False` 才真正删除
+- **默认 dry_run=True**：先试运行确认要删除哪些文件，再设 `dry_run=False`
+- **不 unlink，先进回收站**：`dry_run=False` 把每张同卷改名进 `<workspace>/.flashgaze_deleted/deleted_<UTC>_<pid>/`，并向 `<workspace>/.flashgaze_deleted_<UTC>_<pid>.jsonl` 追加审计记录（原路径 / 回收站路径 / SHA256 / 大小 / 评分）。回收站移动失败**绝不降级为直接 unlink**
+- **95% 批量护栏**：待删数占**可评分图**比例 > 0.95 且评分图 ≥ 6 张时整批拦截、一张不删（损坏图不计入分母，防止其稀释比例绕过拦截）
+- **两步确认（force ↔ 指纹强绑定）**：护栏拦截后须传 `force=True` **加上**先前 dry_run 报告 `summary.fingerprint` 的**匹配**值；只给 `force=True` 或指纹过期本身就会被拦
 - **删除前再次校验**：每个文件删除前都重新检查路径边界
 
 ### 使用流程
 
 ```python
-# 第一步：试运行，查看将要删除哪些文件
-cleanup_workspace_images(
+# 第一步：试运行，查看将要删除哪些文件，并记下返回的 summary.fingerprint
+report = cleanup_workspace_images(
     workspace="C:/my-photos",
     top=30,
     no_vlm=True,
     dry_run=True,  # 默认值，只报告不删除
 )
+fingerprint = report["summary"]["fingerprint"]
 
-# 第二步：确认后实际删除
+# 第二步：人工核对 details.blocked_files / pending_delete 后实际删除
+#   常规批次（未触发 95% 护栏）直接删除即可：
 cleanup_workspace_images(
     workspace="C:/my-photos",
     top=30,
     no_vlm=True,
-    dry_run=False,  # 真正删除低分图
+    dry_run=False,
+)
+
+#   被护栏拦截过（第一次返回 status="blocked" / code=1 / summary.force_required=true）
+#   才需要 force + 指纹同行；缺指纹或指纹来自过期清单 → 再次 blocked，一张不删：
+cleanup_workspace_images(
+    workspace="C:/my-photos",
+    top=30,
+    no_vlm=True,
+    dry_run=False,
+    force=True,
+    confirm_fingerprint=fingerprint,
 )
 ```
+
+> Agent 注意：`force=True` 单独调用**不会**成功删除，它自己就是被拦的那一步。拿到 `blocked`
+> 后正确做法是重跑 `dry_run=True` 取新指纹，再 `force` + `confirm_fingerprint` 同行。
 
 ### 阈值模式
 
@@ -185,28 +204,51 @@ cleanup_workspace_images(workspace="C:/my-photos", top=30, scored=prior_scores, 
 
 ### 返回结构
 
+工具返回标准**六字段** Schema（与其他 MCP 工具一致）；清理类工具 `images` 恒为 `null`，逐项明细在 `details` **里**，不是顶层键：
+
 ```json
 {
   "status": "success",
   "code": 0,
+  "message": null,
   "summary": {
     "workspace": "C:/my-photos",
     "total": 120,
     "selected": 30,
     "to_delete": 90,
     "deleted": 90,
-    "delete_failures": 0,
+    "pending": 0,
+    "blocked": 0,
+    "unevaluated": 0,
     "mode": "actual_delete",
+    "force_required": false,
+    "fingerprint": "9f3c…",
+    "confirm_required": false,
+    "recycle": true,
+    "delete_manifest": "C:/my-photos/.flashgaze_deleted_2026-10-17T091200Z_1234.jsonl",
+    "audit_failed": 0,
+    "vlm_applied": 0,
+    "vlm_degraded": 0,
+    "delete_failures": 0,
     "scored_source": "engine",
     "elapsed_ms": 15420
   },
-  "kept_images": [...],
-  "deleted_files": ["img_001.jpg", "img_002.jpg", ...],
-  "blocked_files": []
+  "images": null,
+  "details": {
+    "kept_images": [...],
+    "deleted_files": ["img_001.jpg", "img_002.jpg"],
+    "blocked_files": [],
+    "unevaluated_files": []
+  }
 }
 ```
 
-`blocked_files` 列出因安全检查被拦截的文件（路径在工作空间外等）。
+- `details.blocked_files` 列出被安全检查拦截的文件（路径在工作空间外、非普通文件、删除失败等），格式为 `"<路径> (<原因>)"`。
+- `summary.force_required=true` → 95% 护栏整批拦截；`summary.confirm_required=true` → `force` 缺指纹或指纹不符。两者本次都**一张未删**，待删项全在 `blocked_files`。
+- `dry_run=True` 时读 `summary.fingerprint`（待删清单指纹）与 `details.deleted_files`（此时装的是**待删**列表）。
+- `summary.delete_manifest` 仅在确有实际删除时非 `null`；它是 `flashgaze restore` 的回滚输入。
+
+**护栏拦截（非成功收场）**：`status="blocked"`、`code=1`，六字段结构不变，`summary` 与 `details.blocked_files` 完整可读。等价 CLI 用退出码 `1`。
 
 **删除失败（非成功收场）**：个别图片删除失败（文件被其它程序占用、只读属性、与回收站
 跨卷）时，返回 `status="partial"`、`code=5`，`summary.delete_failures` 给出未删除张数、
@@ -227,17 +269,29 @@ cleanup_workspace_images(workspace="C:/my-photos", top=30, scored=prior_scores, 
 
 - **仅删除 workspace 目录内的文件**，绝不影响目录外任何资料
 - **双重路径穿越检查**：解析真实路径后用 `relative_to` 校验，防止 `../` 或符号链接逃逸
-- **默认 `--dry-run`**：只报告待删文件列表，**绝不默认删除**；显式 `--apply` 才真正 `unlink`
+- **默认 `--dry-run`**：只报告待删文件列表，**绝不默认删除**
+- **`--apply` 不 unlink**：每张同卷改名进 `<目录>/.flashgaze_deleted/deleted_<UTC>_<pid>/`，并落 JSONL 审计清单 `<目录>/.flashgaze_deleted_<UTC>_<pid>.jsonl`；移动失败绝不降级为直接删除。唯一直接删除出口是 `--no-recycle`，且必须配 `--force`
+- **95% 批量护栏**：待删占可评分图 > 0.95 且评分图 ≥ 6 张 → 整批拦截、一张不删、退出码 `1`
+- **两步确认**：`--force` 必须与 dry_run 报告 `summary.fingerprint` 的匹配值（`--confirm-fingerprint`）同行；单独 `--force` **在评分开始前**就被拒（退出码 `1`），不白烧 VLM 算力
 - **删除前再次校验**：每个文件删除前都重新 `stat`，拒绝符号链接/设备文件/目录（TOCTOU）
 
 ### 使用流程
 
 ```bash
 # 第一步：试运行（默认），查看将要删除哪些文件，文件数 0 变化
-flashgaze cleanup <图片目录路径> --top 30 --no-vlm --dry-run
+#   报告 --json 输出里的 summary.fingerprint 是第二步的凭证
+flashgaze cleanup <图片目录路径> --top 30 --no-vlm --dry-run --json
 
-# 第二步：确认后实际删除低分图（删除前会打印待删数量）
+# 第二步：人工核对后实际删除（进回收站，可回滚）
 flashgaze cleanup <图片目录路径> --top 30 --no-vlm --apply
+
+# 仅当第一步返回「护栏拦截」（退出码 1）时，才需要 force + 指纹同行：
+flashgaze cleanup <图片目录路径> --top 30 --no-vlm \
+    --apply --force --confirm-fingerprint <第一步的 summary.fingerprint>
+
+# 删错了？按审计清单整批回滚（先加 --dry-run 预览）
+flashgaze restore <图片目录路径>/.flashgaze_deleted_<UTC>_<pid>.jsonl --dry-run
+flashgaze restore <图片目录路径>/.flashgaze_deleted_<UTC>_<pid>.jsonl
 ```
 
 ### 阈值模式
@@ -252,8 +306,8 @@ flashgaze cleanup <图片目录路径> --threshold 75 --no-vlm --dry-run
 flashgaze cleanup <图片目录路径> --top 30 --no-vlm --json
 ```
 
-返回 dict 含五段：`summary`（total/selected/to_delete/deleted/pending/blocked/unevaluated/mode/elapsed_ms）、
-`pending_delete`（待删）、`deleted`（已删）、`blocked`（拦截：越界/非普通文件/stat失败/删除失败）、`unevaluated`（损坏图）。
+返回 dict 含 `summary` + **六段数据**：`summary`（workspace/total/selected/to_delete/deleted/pending/blocked/unevaluated/mode/force_required/fingerprint/confirm_required/recycle/delete_manifest/audit_failed/vlm_applied/vlm_degraded/elapsed_ms）、
+`pending_delete`（待删，dry_run 时填充）、`deleted`（已删）、`delete_audit`（与 `deleted` 一一对应的审计记录）、`blocked`（拦截：越界/非普通文件/stat失败/删除失败）、`unevaluated`（损坏图）、`kept`（入选保留）。
 `pending_delete` / `deleted` / `blocked` 每条记录含 `resolved_path`（检查点解析后的真实路径，即实际删除/回收的对象，
 可用于区分 `..` 穿越与链接解析后逃逸）；批级拦截（guard / confirm_required）与 symlink_path（不解析）该字段为 `null`。
 
@@ -263,7 +317,13 @@ flashgaze cleanup <图片目录路径> --top 30 --no-vlm --json
 |---|---|
 | `flashgaze <目录>` / `flashgaze score <目录>` | 目录评分（默认模式） |
 | `flashgaze cleanup <目录>` | 工作空间清理（默认 `--dry-run`） |
-| `--dry-run` / `--apply`（cleanup） | 互斥：试运行（默认） vs 实际删除 |
+| `flashgaze restore <清单>` | 按 cleanup 写出的 JSONL 审计清单整批回滚（位置参数，无 `--json`） |
+| `--dry-run` / `--apply`（cleanup，互斥） | 试运行（默认） vs 实际移除（进回收站，非 unlink） |
+| `--force`（cleanup） | 越过 95% 批量护栏；**必须**与 `--confirm-fingerprint` 同行，单独使用退出码 `1` |
+| `--confirm-fingerprint FP`（cleanup） | dry_run 报告 `summary.fingerprint` 的待删清单指纹；缺失/过期即整批拦截 |
+| `--no-recycle`（cleanup） | 直接删除、不进回收站（无回滚点），须配 `--force` |
+| `--guard-min-sample N`（cleanup） | 护栏启用所需最少评分图数（默认 6，下限 1）；护栏不可经配置关闭 |
+| `--dry-run`（restore） | 只报告将恢复哪些文件，不实际移动 |
 | `--json`（cleanup） | 结构化结果输出到 stdout |
 | `--output PATH`（cleanup） | 报告写入文件（需搭配 --json） |
 
@@ -302,7 +362,7 @@ flashgaze cleanup <图片目录路径> --top 30 --no-vlm --json
 | 码 | 含义 |
 |---|---|
 | 0 | 成功 |
-| 1 | 参数错误（含 `--exif --no-exif-backup` 未加 `--force` 的护栏拦截） |
+| 1 | 参数错误：含 `--exif --no-exif-backup` 未加 `--force` 的护栏拦截；含 `flashgaze cleanup` 被 95% 批量护栏整批拦截、`--force` 缺 `--confirm-fingerprint`、或指纹与当前待删清单不符（三种情形均**一张未删**） |
 | 2 | API 调用失败（保留码：非致命时降级为 0——VLM 失败回退纯 CV） |
 | 3 | 目录无效或无图片 |
 | 4 | 图片处理错误（单图损坏/不支持等评分阶段失败，降级为 `error` 字段；BRISQUE 模型完整性校验失败终止整批时也返回本码） |
@@ -339,11 +399,14 @@ flashgaze cleanup <图片目录路径> --top 30 --no-vlm --json
 | `--scene SCENE` | 场景化评分模式：`auto`（默认）/ `portrait` / `landscape` / `still_life` |
 | `--workers N` | 并发数（默认 4） |
 | `--enable-composition` | 启用构图评分（实验性） |
-| `--enable-noise` | 启用 BRISQUE 噪点评分（需 opencv-contrib-python；模型文件已随包分发） |
+| `--enable-noise` | 启用 BRISQUE 噪点评分（需 `cv-enhanced` extras：`opencv-contrib-python-headless`；模型文件已随包分发） |
 | `--enable-color` | 启用色彩丰富度评分（HSV 直方图分布） |
 | `--enable-portrait` | 启用人像专项评分（需 face_recognition） |
-| `cleanup <目录>` | CLI 工作空间清理子命令，默认 `--dry-run`；`--apply` 才删除 |
-| `--dry-run` / `--apply` | cleanup 专用：试运行（默认） vs 实际删除 |
+| `cleanup <目录>` | CLI 工作空间清理子命令，默认 `--dry-run`；`--apply` 才移除（进回收站，可回滚） |
+| `--dry-run` / `--apply` | cleanup 专用（互斥）：试运行（默认） vs 实际移除 |
+| `--force` + `--confirm-fingerprint` | cleanup 专用：仅在 95% 护栏拦截时使用，**两者必须同行**（指纹取自 dry_run 报告的 `summary.fingerprint`）；单独 `--force` 退出码 1 |
+| `--no-recycle` / `--guard-min-sample N` | cleanup 专用：跳过回收站直接删除（须配 `--force`） / 护栏最小样本（默认 6） |
+| `restore <清单>` | 按 cleanup 写出的 `.flashgaze_deleted_<UTC>_<pid>.jsonl` 整批回滚；支持 `--dry-run` |
 | `--enable-dedup` | 启用 PHash 图片去重（需 imagededup） |
 | `--dedup-threshold N` | PHash 汉明距离阈值（默认 8，越小越严格） |
 | `--weights JSON` | 自定义权重 JSON，可选 key：composition/noise/color |
@@ -361,7 +424,7 @@ flashgaze cleanup <图片目录路径> --top 30 --no-vlm --json
 
 ## VLM 提供商
 
-FlashGaze 通过**同一套自管 pin-IP 直连层**支持四个 VLM 提供商——**无任何厂商专属适配代码，且默认无需 LiteLLM**。所有 provider（qwen / openai / anthropic / ollama）在构造期解析并 **pin 单一 IP**，随后直连该 IP（固定 `Host` 头 + HTTPS SNI pin + `allow_redirects=False`），彻底消除 DNS 重绑定 TOCTOU 绕过面（含云元数据 `169.254.169.254` / 私网）。LiteLLM 仅作为**可选 opt-in 后端**（`VLMClient(use_litellm=True)`）用于特殊兼容场景。
+FlashGaze 通过**同一套自管 pin-IP 直连层**支持四个 VLM 提供商——**无任何厂商专属适配代码，且默认无需 LiteLLM**。所有 provider（qwen / openai / anthropic / ollama）在构造期解析主机名，对**每一个**候选 IP 跑 SSRF 校验，随后直连这些 IP（固定 `Host` 头 + HTTPS SNI pin + `allow_redirects=False`），彻底消除 DNS 重绑定 TOCTOU 绕过面（含云元数据 `169.254.169.254` / 私网）。LiteLLM 仅作为**可选 opt-in 后端**（`VLMClient(use_litellm=True)`）用于特殊兼容场景。
 
 | Provider | 模型示例 | API base | 是否需要 LiteLLM |
 |---|---|---|---|

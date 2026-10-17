@@ -10,7 +10,7 @@ Hybrid CV + VLM engine for scoring and filtering photos on your machine, designe
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/QianQianLuLu1/FlashGaze/actions/workflows/ci.yml/badge.svg)](https://github.com/QianQianLuLu1/FlashGaze/actions/workflows/ci.yml)
 [![Codecov](https://codecov.io/gh/QianQianLuLu1/FlashGaze/badge.svg)](https://codecov.io/gh/QianQianLuLu1/FlashGaze)
-[![Tests](https://img.shields.io/badge/tests-1052%20passed-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-1030%20passed-brightgreen.svg)](#testing)
 [![Version](https://img.shields.io/badge/version-0.1.2-orange.svg)](#)
 
 **[English](#english) · [中文](#中文)**
@@ -30,6 +30,7 @@ Hybrid CV + VLM engine for scoring and filtering photos on your machine, designe
 | Install | [Installation](#installation) | [安装](#安装) |
 | Usage | [Quick Start](#quick-start) | [快速开始](#快速开始) |
 | CLI | [CLI Options](#cli-options) | [CLI 选项](#cli-选项) |
+| Cleanup | [CLI Options: cleanup and restore](#cli-options-cleanup-and-restore) | [CLI 选项：cleanup 与 restore](#cli-选项cleanup-与-restore) |
 | MCP | [MCP Server](#mcp-server) | [MCP Server](#mcp-server-1) |
 | GUI | [Web GUI](#web-gui) | [Web GUI](#web-gui-1) |
 | Skill | [AI Agent Skill](#ai-agent-skill) | [AI Agent Skill](#ai-agent-skill-1) |
@@ -157,8 +158,17 @@ flashgaze ./photos --threshold 75 --json --csv
 # Workspace cleanup — dry-run first (reports only, deletes nothing)
 flashgaze cleanup ./photos --top 30 --no-vlm --dry-run
 
-# Workspace cleanup — actually delete low-score images (prints pending count first)
+# Workspace cleanup — actually delete low-score images. Nothing is unlinked: each file is
+# renamed into ./photos/.flashgaze_deleted/deleted_<UTC>_<pid>/ and one JSONL audit line
+# (original path / recycle path / SHA256 / size / score) is appended to the manifest
 flashgaze cleanup ./photos --top 30 --no-vlm --apply
+
+# Only when the batch guard blocks (>95% of scoreable images would go): take the
+# fingerprint from the dry-run report and pass it back together with --force
+flashgaze cleanup ./photos --top 30 --no-vlm --apply --force --confirm-fingerprint <summary.fingerprint>
+
+# Roll a batch back from its audit manifest (add --dry-run to preview the restore plan)
+flashgaze restore ./photos/.flashgaze_deleted_2026-10-17T091200Z_1234.jsonl
 ```
 
 <details>
@@ -209,7 +219,7 @@ flashgaze cleanup ./photos --top 30 --no-vlm --apply
 | `--csv-output PATH` | Write CSV report to file (requires `--csv`; default `flashgaze_result.csv`; paths resolving outside the scanned directory are rejected, exit code 1) |
 | `--exif` | Write final score back to image EXIF metadata (JPEG/WebP only; requires `pip install -e ".[exif]"`) |
 | `--no-exif-backup` | Skip creating the `.flashgaze_backup` original before writing EXIF (dangerous: in-place rewrite with no rollback point; requires `--force` to confirm) |
-| `--force` | Dangerous-action confirmation switch: required by `--no-exif-backup` (same semantics as the cleanup guardrail flag) |
+| `--force` | Dangerous-action confirmation switch. **Semantics differ per subcommand**: on `score` it only needs to be present (required by `--no-exif-backup`); on `cleanup` it must be paired with `--confirm-fingerprint` taken from a prior dry-run report, otherwise it is rejected with exit code 1 **before any scoring** |
 | `--xlsx` | Also emit a `.xlsx` scoring sheet (requires `pip install -e ".[xlsx]"`) |
 | `--xlsx-output PATH` | `.xlsx` output path (requires `--xlsx`; default `flashgaze_result.xlsx`; paths resolving outside the scanned directory are rejected, exit code 1) |
 | `--enable-plugins` | Enable the plugin scoring stage (auto-discovers builtin + user plugin dirs) |
@@ -218,7 +228,7 @@ flashgaze cleanup ./photos --top 30 --no-vlm --apply
 | `--vlm-provider PROVIDER` | VLM provider: `qwen` (default) / `openai` / `anthropic` / `ollama`. All use the built-in pinned layer (no LiteLLM required); `.[vlm-multi]` only needed for the optional LiteLLM backend |
 | `--scene SCENE` | Scene-based scoring mode: `auto` (default) / `portrait` / `landscape` / `still_life` |
 | `--enable-composition` | Enable rule-of-thirds scoring *(experimental)* |
-| `--enable-noise` | Enable BRISQUE no-reference noise scoring *(requires opencv-contrib-python + model files)* |
+| `--enable-noise` | Enable BRISQUE no-reference noise scoring *(requires the `cv-enhanced` extra — `opencv-contrib-python-headless` — plus the model files bundled under `flashgaze/models/brisque/`)* |
 | `--enable-color` | Enable HSV color richness scoring |
 | `--enable-portrait` | Enable portrait scoring (face count + face-region sharpness, +3~5 bonus) *(requires face_recognition)* |
 | `--enable-dedup` | Enable PHash deduplication (similar images keep only the highest score) *(requires imagededup)* |
@@ -238,9 +248,32 @@ flashgaze cleanup ./photos --top 30 --no-vlm --apply
 
 Progress display: when stderr is a real terminal, a progress bar renders on stderr (stdout stays JSON-only); when piped/redirected (CI, agents), no progress output is produced at all; with `--verbose`, progress becomes plain log lines.
 
+## CLI Options: `cleanup` and `restore`
+
+The table above is the `score` surface. `flashgaze cleanup` shares the scoring knobs (`--top`, `--threshold`, `--no-vlm`, `--workers`, `--scene`, `--json`, `--output`, …) and adds its own group:
+
+| Option | Description |
+|---|---|
+| `--dry-run` | Report only, delete nothing — **the default** (mutually exclusive with `--apply`) |
+| `--apply` | Actually remove low-score images. Nothing is unlinked: each file is renamed into `<workspace>/.flashgaze_deleted/deleted_<UTC>_<pid>/` and an audit line (original path / recycle path / SHA256 / size / score) is appended to `<workspace>/.flashgaze_deleted_<UTC>_<pid>.jsonl` |
+| `--force` | Bypass the 95% batch-deletion guard. **Must** be paired with `--confirm-fingerprint`; `--force` on its own is rejected with exit code 1 **before scoring starts** (no VLM cost is burned on an input that cannot pass) |
+| `--confirm-fingerprint FP` | The `summary.fingerprint` of the pending-delete list, taken from an earlier dry-run report. Missing or stale → the whole batch is blocked, nothing is deleted, exit code 1 (`status="blocked"` over MCP) |
+| `--no-recycle` | Delete in place instead of moving to the recycle bin — no rollback point, therefore requires `--force` |
+| `--guard-min-sample N` | Fewest scored images before the ratio guard engages (default 6, floored at 1). The guard cannot be switched off by configuration; passing it requires `--force` plus a matching fingerprint |
+
+`flashgaze restore` rolls one cleanup batch back from its audit manifest:
+
+| Argument | Description |
+|---|---|
+| `MANIFEST` (positional) | The `.flashgaze_deleted_<UTC>_<pid>.jsonl` written by `cleanup --apply` |
+| `--dry-run` | Report which files would be moved back; move nothing |
+| `--verbose`, `--version` | Same as `score` (no `--json` on this subcommand) |
+
+Both the recycle directory and the manifest start with `.`, so `iter_images` skips them: a deleted batch is never re-picked-up by a later `score` / `export` / `cleanup` run.
+
 ## VLM Providers
 
-FlashGaze supports four VLM providers through a **single self-managed pinned-requests layer** — **no per-vendor adapter code, and no LiteLLM required by default**. Every provider (qwen / openai / anthropic / ollama) resolves and **pins a single IP at construction time**, then connects directly to that IP with a pinned `Host` header + TLS SNI pin (HTTPS) and `allow_redirects=False`, eliminating the DNS-rebinding TOCTOU window (incl. cloud metadata `169.254.169.254` / private ranges). LiteLLM remains an **optional opt-in backend** (`VLMClient(use_litellm=True)`) for advanced compatibility scenarios.
+FlashGaze supports four VLM providers through a **single self-managed pinned-requests layer** — **no per-vendor adapter code, and no LiteLLM required by default**. Every provider (qwen / openai / anthropic / ollama) resolves its hostname at construction time, screens **every** candidate IP against the SSRF rules, and then connects directly to those IPs with a pinned `Host` header + TLS SNI pin (HTTPS) and `allow_redirects=False`, eliminating the DNS-rebinding TOCTOU window (incl. cloud metadata `169.254.169.254` / private ranges). What is pinned is a **validated candidate pool**, not one address: the client round-robins across the surviving IPs and re-resolves DNS after a threshold of consecutive connection failures (priority `public > restricted-private > loopback`). Re-resolution re-runs the same SSRF checks and **never** falls back to connecting by hostname, so the TOCTOU guarantee survives the refresh. LiteLLM remains an **optional opt-in backend** (`VLMClient(use_litellm=True)`) for advanced compatibility scenarios.
 
 | Provider | Model example | API base | Requires LiteLLM |
 |---|---|---|---|
@@ -251,7 +284,7 @@ FlashGaze supports four VLM providers through a **single self-managed pinned-req
 
 > **Self-hosted Ollama on a LAN / Docker:** the built-in SSRF guard rejects private/link-local addresses (e.g. `192.168.x`, `10.x`, `172.17.x`, docker gateway `169.254.x`) for public-cloud providers. **`ollama` is treated as self-hosted and auto-allows these targets** — just point `FLASHGAZE_API_BASE` at your LAN host (e.g. `http://192.168.1.10:11434`) and it works out of the box. The pin-IP direct-connect (no DNS-rebinding TOCTOU) is still applied. For **non-ollama** self-hosting (e.g. a qwen/openai-compatible endpoint behind a private IP), opt in explicitly with `FLASHGAZE_ALLOW_PRIVATE_TARGETS=true`.
 
-> **Endpoint allowlist (warn-only):** `api_base` accepts four unvalidated sources (env var, JSON config file, CLI `--api-base`, WebUI text box) and your API key plus every image are POSTed to whatever host it points at. `build_config` therefore checks the endpoint against the allowlist and logs a **WARNING** (host + reason + remedy) when it is not covered — **it does not block the run**, so self-hosted setups keep working. Private/loopback hosts are exempt under `provider=ollama` or `FLASHGAZE_ALLOW_PRIVATE_TARGETS=true`. To silence the warning, add the host to `FLASHGAZE_API_BASE_ALLOWLIST` or set `FLASHGAZE_ALLOW_UNTRUSTED_API_BASE=1`. This matters most for config files: cloning a third-party repo that ships a config can otherwise silently redirect your key and images.
+> **Endpoint allowlist (warn-only):** `api_base` accepts four unvalidated sources (env var, JSON config file, CLI `--api-base`, WebUI text box) and your API key plus every image are POSTed to whatever host it points at. `build_config` therefore checks the endpoint against the allowlist and logs a **WARNING** (host + reason + remedy) when it is not covered — **it does not block the run**, so self-hosted setups keep working. Private/loopback hosts are exempt under `provider=ollama` or `FLASHGAZE_ALLOW_PRIVATE_TARGETS=true`. To silence the warning, add the host to `FLASHGAZE_API_BASE_ALLOWLIST` (note that supplying a value **replaces** the built-in list, so re-list the official domains you still want covered) or set `FLASHGAZE_ALLOW_UNTRUSTED_API_BASE=1`. This matters most for config files: cloning a third-party repo that ships a config can otherwise silently redirect your key and images.
 
 > **Proxy incompatibility (by design):** the pinned layer sets `trust_env=False`, so `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` and `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` are **ignored** — a proxy would resolve the target hostname itself (and an injected CA would break certificate validation), silently bypassing the pin-IP / Host-pin / SNI-pin guarantees above. A one-time `WARNING` is logged at construction when any of these variables is set. If you must reach a VLM endpoint through a proxy, use the opt-in LiteLLM backend (`VLMClient(use_litellm=True)`) — it does not apply the pin-IP direct-connect, and whether it honours environment proxies is decided by LiteLLM itself (outside this module's control).
 
@@ -409,7 +442,7 @@ The `cleanup_workspace_images` tool enforces strict safety boundaries:
 - Re-validates each file's path boundary before deletion
 - Batch-deletion guardrail: if more than 95% of the scoreable images would be deleted (with at least 6 images scored in total), the whole batch is blocked — **nothing is deleted** and every candidate is listed in `details.blocked_files`. The ratio is computed over scoreable images only: corrupted images (evaluation errors) count toward neither numerator nor denominator, so they cannot dilute the ratio and slip past the guardrail
 
-**Programmatic convention (guardrail blocked):** when the guardrail fires, the tool returns a non-zero result — `status="blocked"`, `code=1`, `summary.force_required=true`. The response keeps the standard six-field schema, so `summary` and `details.blocked_files` stay readable. Re-run with `force=True` once you have reviewed the list; that call returns `status="success"`, `code=0`. The CLI equivalent (`flashgaze cleanup`) signals the same condition with **exit code `1`** and an error log. In other words: CLI encodes it in the process exit code, MCP encodes it in `status`/`code` of the JSON payload.
+**Programmatic convention (guardrail blocked):** when the guardrail fires, the tool returns a non-zero result — `status="blocked"`, `code=1`, `summary.force_required=true`. The response keeps the standard six-field schema, so `summary` and `details.blocked_files` stay readable. Recovery is **two-step**: re-run with `dry_run=True`, review the pending list, then pass `force=True` **together with the matching `confirm_fingerprint`** copied from that report's `summary.fingerprint`. `force=True` on its own — or paired with a fingerprint from a stale list — is *itself* blocked (`status="blocked"`, `code=1`, nothing deleted), because the fingerprint is what proves a human reviewed this exact batch. Only a force call with a matching fingerprint returns `status="success"`, `code=0`. The CLI equivalent (`flashgaze cleanup`) signals the same condition with **exit code `1`** and an error log. In other words: CLI encodes it in the process exit code, MCP encodes it in `status`/`code` of the JSON payload.
 
 **Programmatic convention (delete failures):** if an individual image cannot be deleted — it is open in another program, read-only, or on a different volume than the recycle bin — the tool returns `status="partial"`, `code=5`, with the count in `summary.delete_failures` and per-item `{path, reason}` in `details.delete_failures`. The remaining images are still processed normally, and the low-score images that failed to delete stay on disk (the recycle-bin move is never downgraded to a plain `unlink`). `summary.delete_failures` is explicitly `0` when every deletion succeeds. The CLI equivalent (`flashgaze cleanup`) signals the same condition with **exit code `5`**.
 
@@ -457,7 +490,7 @@ flashgaze-webui --host 0.0.0.0 --port 8080
 1. **Directory & basic params** — directory, `--top`, `--threshold`, `--scene`, `--no-vlm`
 2. **CV enhancement dimensions** — composition / noise / color / portrait / dedup / `--no-downscale`
 3. **Weights** — five sliders (sharpness / exposure / composition / noise / color); auto-normalized by `build_config`
-4. **VLM config** — `--vlm-provider`, API key, `--api-base`, `--model`, `--workers` (disabled when `--no-vlm` is checked)
+4. **VLM config** — `--vlm-provider`, API key, `--api-base`, `--model` (greyed out when `--no-vlm` is checked) and `--workers`, which **stays editable** in offline mode — CV scoring still runs on the process pool there
 5. **Scoring results** — summary JSON + sortable dataframe (same columns as CSV)
 6. **High-score gallery** — thumbnails sorted by score, with captions showing score / selected mark / VLM reason
 7. **Filter** — filter table & gallery by selected / min score / keyword (does not affect export)
@@ -517,7 +550,7 @@ Priority order: **CLI args** > **environment variables** > **config file** > **d
 | `FLASHGAZE_WEIGHTS` | Scoring weights as JSON, e.g. `{"sharpness":0.5,"exposure":0.5}` — `sharpness`/`exposure` required, `composition`/`noise`/`color` optional, auto-normalized to sum 1 | built-in `sharpness 0.5 / exposure 0.5` |
 | `FLASHGAZE_DEDUP_THRESHOLD` | PHash hamming-distance threshold for dedup (`--enable-dedup`); lower is stricter | `8` |
 | `FLASHGAZE_ALLOW_PRIVATE_TARGETS` | **SSRF escape hatch**: set `true` to allow the VLM endpoint to resolve to a private/link-local/reserved/multicast address (e.g. self-hosted qwen/openai-compatible). Default `false` keeps the guard on for public-cloud providers. `ollama` auto-allows private targets, so this is only needed for non-ollama self-hosting. | `false` |
-| `FLASHGAZE_API_BASE_ALLOWLIST` | **Endpoint allowlist**: comma-separated host suffixes appended to the built-in official domains (`dashscope.aliyuncs.com`, `dashscope-intl.aliyuncs.com`, `api.openai.com`, `api.anthropic.com`, `localhost`, `host.docker.internal`). Matching is exact-host or `.suffix`, so `dashscope.aliyuncs.com.evil.com` does **not** match. | built-in official domains |
+| `FLASHGAZE_API_BASE_ALLOWLIST` | **Endpoint allowlist**: comma-separated host suffixes. Supplying a value **replaces the built-in official-domain list outright — it does not extend it** (defaults: `dashscope.aliyuncs.com`, `dashscope-intl.aliyuncs.com`, `api.openai.com`, `api.anthropic.com`, `localhost`, `host.docker.internal`; an empty/invalid value falls back to those defaults). Adding one self-hosted host therefore silences only that host and starts warning on the six official ones — list all seven to keep both. Matching is exact-host or `.suffix`, so `dashscope.aliyuncs.com.evil.com` does **not** match. | built-in official domains |
 | `FLASHGAZE_MCP_ALLOWED_ROOTS` | **Allowed scan roots for MCP upload/single-image scoring**: comma-separated directories whose images `score_uploaded_images` / `score_single_image` may read. Paths outside the roots are rejected before any file access; there is no switch to disable the boundary. | MCP server startup directory |
 | `FLASHGAZE_ALLOW_UNTRUSTED_API_BASE` | Set `1`/`true`/`yes`/`on` to declare the current `api_base` trusted — silences the non-allowlist warning for self-hosted / custom gateways. | unset |
 | `FLASHGAZE_TIMEOUT` | Request timeout (seconds) | `30` |
@@ -570,7 +603,7 @@ pytest tests/ -v --cov=flashgaze --cov-report=term-missing
 
 The default run carries a baked-in filter (`pyproject.toml` `[tool.pytest.ini_options]`, review item M-17): `addopts = '-m "not e2e"'` plus `testpaths = ["tests"]`, so a bare `pytest` / `pytest tests/` only collects `tests/` and never touches the browser-E2E suite or the top-level `benchmarks/` — one machine-executable definition of what a pass covers. An explicit `-m` on the command line overrides the default entirely (re-state all exclusions you need, e.g. `-m "not slow and not e2e"`); `-o addopts=` lifts the default; `make test` / `make test-all` are the one-click equivalents.
 
-1080 tests collected by default (measured with all safe extras installed: 1052 passed / 28 skipped; the 10 browser-E2E tests are deselected by the default filter; WebUI layers auto-skip where gradio is absent) covering CV engine, VLM client, hybrid scorer, exporter, CLI parser, end-to-end flows, reproducibility, config layers, and the three-layer Web GUI coverage below.
+**Dated snapshot — 2026-10-17, Windows / Python 3.12.10, extras `mcp,gui,exif,xlsx` installed:** `python -m pytest tests/ --collect-only -q` reports `1058/1096 tests collected (38 deselected)`, and `python -m pytest tests/ -q` reports `1030 passed / 28 skipped / 38 deselected`. The 38 deselected are the **two** module-level `e2e` suites — the Playwright Web GUI tests (`tests/e2e/test_webui_e2e.py`) **and** the CLI end-to-end tests (`tests/test_cli_e2e.py`); each carries a module-level `pytestmark`, so the default filter drops both together. These totals move with the installed extras (a module whose dependency is absent skips during collection), so read them as a snapshot rather than a contract; the durable invariants are the default filter itself and the `38 deselected` figure. Coverage spans the CV engine, VLM client, hybrid scorer, exporter, CLI parser, end-to-end flows, reproducibility, config layers, and the three-layer Web GUI below.
 
 Coverage gate: total coverage must stay ≥ 80% (configured in `.coveragerc`, enforced by the same `pytest --cov` run locally and in CI). `mcp_server`, `webui/app`, and `exif_writer` are inside the gate — the main CI matrix installs the lightweight `mcp,gui,exif,heic` extras so their tests run there (without them the gate measures skipped tests: 79.31% in practice). The three dependency-heavy optional modules (`xlsx_exporter`, `deduplicator`, `portrait_engine`) are excluded from the main gate and enforced by the CI `extras` job instead (`.coveragerc-extras`: unconditional hard floor of 50% overall plus per-module floors in `ci.yml`; see `docs/extras-governance.md`).
 
@@ -635,16 +668,17 @@ Dependency security scanning runs in the dedicated `security.yml` workflow, trig
 
 Today ruff and mypy run **only in CI**, so non-compliant code can still be committed. The repo ships two complementary local guards that reuse the *exact same* commands as the CI `lint` / `typecheck` jobs (so versions and rules stay in `pyproject.toml` — single source of truth, zero drift):
 
-- **pre-commit hook** (`.pre-commit-config.yaml`): auto-runs `ruff check`, `ruff format --check`, and `mypy` on every `git commit`. Install once with:
+- **pre-commit hook** (`.pre-commit-config.yaml`): auto-runs `ruff check`, `ruff format --check`, `mypy`, and `python -m tools.check_agents_md` (AGENTS.md section + scoped-doc integrity) on every `git commit`. Install once with:
   ```bash
   pip install -r requirements-dev.txt
   pre-commit install
   ```
-  Each commit is then blocked until all three checks pass. Run them manually on every file with `pre-commit run --all-files`.
+  Each commit is then blocked until all four checks pass. All four are declared `always_run: true`, so they fire on **every** commit regardless of which files changed — the same coverage as CI. Run them manually on every file with `pre-commit run --all-files`.
 
 - **Makefile** (one-click manual checks, also useful for CI-local parity):
   ```bash
   make check        # lint + format-check + typecheck (full local guard)
+  make verify       # check + test (never runs `format`, which rewrites files)
   make lint         # python -m ruff check .
   make format       # python -m ruff format .
   make format-check # python -m ruff format --check .
@@ -692,7 +726,7 @@ You can also trigger the workflow manually from the **Actions** tab (`Run workfl
 **Authentication (PyPI Trusted Publishing / OIDC):** no repository secret is required. Before the first release, register a *Trusted Publisher* on the PyPI project page (*Publishing* section) with:
 
 - **Repository**: `https://github.com/<owner>/<repo>` (this repository)
-- **Workflow name**: `release` (the filename of `.github/workflows/release.yml`, without `.yml`)
+- **Workflow name**: `release.yml` — the **filename** of `.github/workflows/release.yml`, **extension included** (GitHub's own PyPI-OIDC setup page gives the value as `release.yml`). Do **not** paste the workflow's declared display name: `release.yml` carries `name: Release`, and PyPI matches the filename, not that display name. Getting this wrong makes the very first `publish` job fail with an opaque trusted-publisher mismatch.
 - **Environment**: leave blank
 
 The `publish` job declares `permissions: id-token: write`, so the `pypa/gh-action-pypi-publish` action automatically exchanges the short-lived OIDC token for PyPI credentials — no long-lived API token is ever stored.
@@ -828,8 +862,16 @@ flashgaze ./photos --threshold 75 --json --csv
 # 工作空间清理 —— 先试运行（只报告，不删除任何文件）
 flashgaze cleanup ./photos --top 30 --no-vlm --dry-run
 
-# 确认无误后实际删除低分图（删除前会打印待删数量）
+# 确认无误后实际删除低分图。不会 unlink 任何文件：每张先同卷改名进
+# ./photos/.flashgaze_deleted/deleted_<UTC>_<pid>/，并向审计清单
+# ./photos/.flashgaze_deleted_<UTC>_<pid>.jsonl 追加一行（原路径 / 回收站路径 / SHA256 / 大小 / 评分）
 flashgaze cleanup ./photos --top 30 --no-vlm --apply
+
+# 仅当 95% 批量护栏拦截时需要：从 dry_run 报告取 summary.fingerprint，与 --force 同行回填
+flashgaze cleanup ./photos --top 30 --no-vlm --apply --force --confirm-fingerprint <summary.fingerprint>
+
+# 按审计清单整批回滚（加 --dry-run 可先预览恢复计划）
+flashgaze restore ./photos/.flashgaze_deleted_2026-10-17T091200Z_1234.jsonl
 ```
 
 <details>
@@ -880,7 +922,7 @@ flashgaze cleanup ./photos --top 30 --no-vlm --apply
 | `--csv-output PATH` | CSV 清单输出路径（需搭配 `--csv`；默认 `flashgaze_result.csv`；越出被扫描目录的路径会被拒绝，退出码 1） |
 | `--exif` | 将最终评分写回图片 EXIF 元数据（仅 JPEG/WebP；需 `pip install -e ".[exif]"`） |
 | `--no-exif-backup` | 写 EXIF 时不创建 `.flashgaze_backup` 原文件备份（危险：原地改写且无回滚点，须配合 `--force` 确认） |
-| `--force` | 危险操作确认开关：`--no-exif-backup` 必须配合使用（与 cleanup 护栏旗同语义） |
+| `--force` | 危险操作确认开关，**语义随子命令而变**：`score` 下只需出现即可（`--no-exif-backup` 必须配合）；`cleanup` 下必须与 `--confirm-fingerprint` 同行，单独使用会在**评分开始之前**就以退出码 1 被拒 |
 | `--xlsx` | 额外生成 `.xlsx` 评分表（需 `pip install -e ".[xlsx]"`） |
 | `--xlsx-output PATH` | `.xlsx` 输出路径（需搭配 `--xlsx`；默认 `flashgaze_result.xlsx`；越出被扫描目录的路径会被拒绝，退出码 1） |
 | `--enable-plugins` | 启用插件评分阶段（自动发现内置与用户插件目录） |
@@ -889,7 +931,7 @@ flashgaze cleanup ./photos --top 30 --no-vlm --apply
 | `--vlm-provider 提供商` | VLM 提供商：`qwen`（默认）/ `openai` / `anthropic` / `ollama`。全部走内置 pin 直连层（无需 LiteLLM）；`.[vlm-multi]` 仅用于可选的 LiteLLM 后端 |
 | `--scene 场景` | 场景化评分模式：`auto`（默认）/ `portrait` / `landscape` / `still_life` |
 | `--enable-composition` | 启用构图评分 *（实验性）* |
-| `--enable-noise` | 启用 BRISQUE 无参考噪点评分 *（需 opencv-contrib-python + 模型文件）* |
+| `--enable-noise` | 启用 BRISQUE 无参考噪点评分 *（需 `cv-enhanced` extras——`opencv-contrib-python-headless`——以及 `flashgaze/models/brisque/` 随包分发的模型文件）* |
 | `--enable-color` | 启用色彩丰富度评分 |
 | `--enable-portrait` | 启用人像专项评分（人脸数 + 区域清晰度，加分 +3~5） *（需 face_recognition）* |
 | `--enable-dedup` | 启用 PHash 图片去重（相似图保留最高分） *（需 imagededup）* |
@@ -909,9 +951,32 @@ flashgaze cleanup ./photos --top 30 --no-vlm --apply
 
 进度显示约定：stderr 连接真实终端时在 stderr 渲染进度条（stdout 始终只输出 JSON）；管道/重定向（CI、Agent 调用）下不输出任何进度；`--verbose` 时进度改为逐行日志。
 
+## CLI 选项：`cleanup` 与 `restore`
+
+上表是 `score` 的参数面。`flashgaze cleanup` 复用评分旋钮（`--top`、`--threshold`、`--no-vlm`、`--workers`、`--scene`、`--json`、`--output` 等），并追加自己的一组：
+
+| 选项 | 说明 |
+|---|---|
+| `--dry-run` | 只报告、不删除——**默认行为**（与 `--apply` 互斥） |
+| `--apply` | 实际移除低分图。不 unlink 任何文件：每张同卷改名进 `<工作空间>/.flashgaze_deleted/deleted_<UTC>_<pid>/`，并向 `<工作空间>/.flashgaze_deleted_<UTC>_<pid>.jsonl` 追加一条审计记录（原路径 / 回收站路径 / SHA256 / 大小 / 评分） |
+| `--force` | 越过 95% 批量删除护栏。**必须**与 `--confirm-fingerprint` 同行；单独使用会在**评分开始前**就以退出码 1 被拒（不在必然被拦的输入上白烧 VLM 算力） |
+| `--confirm-fingerprint FP` | 来自先前 dry_run 报告 `summary.fingerprint` 的待删清单指纹。缺失或过期 → 整批拦截、一张不删、退出码 1（MCP 侧 `status="blocked"`） |
+| `--no-recycle` | 直接删除而不进回收站（无回滚点），因此必须配 `--force` |
+| `--guard-min-sample N` | 护栏启用所需的最少评分图数（默认 6，下限钳到 1）。护栏**不可经配置关闭**，放行只能走 `--force` + 匹配指纹 |
+
+`flashgaze restore` 按审计清单整批回滚一次清理：
+
+| 参数 | 说明 |
+|---|---|
+| `MANIFEST`（位置参数） | `cleanup --apply` 写出的 `.flashgaze_deleted_<UTC>_<pid>.jsonl` |
+| `--dry-run` | 只报告将恢复哪些文件，不实际移动 |
+| `--verbose`、`--version` | 与 `score` 一致（本子命令无 `--json`） |
+
+回收站目录与审计清单都以 `.` 开头，`iter_images` 会整体跳过：已删批次不会被后续 `score` / `export` / `cleanup` 二次拾取。
+
 ## VLM 提供商
 
-FlashGaze 通过**同一套自管 pin-IP 直连层**支持四个 VLM 提供商——**无任何厂商专属适配代码，且默认无需 LiteLLM**。所有 provider（qwen / openai / anthropic / ollama）在构造期解析并 **pin 单一 IP**，随后直连该 IP（固定 `Host` 头 + HTTPS SNI pin + `allow_redirects=False`），彻底消除 DNS 重绑定 TOCTOU 绕过面（含云元数据 `169.254.169.254` / 私网）。LiteLLM 仅作为**可选 opt-in 后端**（`VLMClient(use_litellm=True)`）用于特殊兼容场景。
+FlashGaze 通过**同一套自管 pin-IP 直连层**支持四个 VLM 提供商——**无任何厂商专属适配代码，且默认无需 LiteLLM**。所有 provider（qwen / openai / anthropic / ollama）在构造期解析主机名，对**每一个**候选 IP 跑 SSRF 校验，随后直连这些 IP（固定 `Host` 头 + HTTPS SNI pin + `allow_redirects=False`），彻底消除 DNS 重绑定 TOCTOU 绕过面（含云元数据 `169.254.169.254` / 私网）。钉住的是**通过校验的候选 IP 池**而非单个地址：客户端在存活候选间轮询，并在连续连接失败达到阈值时重新解析 DNS（优先级 `公网 > 受限私网 > 回环`）。重解析会重跑同一套 SSRF 校验，且**绝不**回退为按主机名连接，故 TOCTOU 保证在刷新后依然成立。LiteLLM 仅作为**可选 opt-in 后端**（`VLMClient(use_litellm=True)`）用于特殊兼容场景。
 
 | 提供商 | 模型示例 | API 端点 | 是否需要 LiteLLM |
 |---|---|---|---|
@@ -922,7 +987,7 @@ FlashGaze 通过**同一套自管 pin-IP 直连层**支持四个 VLM 提供商�
 
 > **局域网 / Docker 自托管 Ollama：** 内置 SSRF 防护会对公网云 provider 拒绝私网/链路本地地址（如 `192.168.x`、`10.x`、`172.17.x`、Docker 网关 `169.254.x`）。**`ollama` 被视为自托管 provider，默认即放行这些目标**——只需把 `FLASHGAZE_API_BASE` 指向局域网主机（如 `http://192.168.1.10:11434`）即可开箱即用。pin-IP 直连（无 DNS 重绑定 TOCTOU）仍然生效。若需**非 ollama** 的自托管（如私网内的 qwen/openai 兼容端点），显式设置 `FLASHGAZE_ALLOW_PRIVATE_TARGETS=true` 即可放行。
 
-> **端点白名单（仅告警、不阻断）：** `api_base` 有四条互不校验的来源（环境变量、JSON 配置文件、CLI `--api-base`、WebUI 文本框），而 API Key 与全部图片内容都会被 POST 到它指向的主机。因此 `build_config` 会按白名单校验端点，未覆盖时打一条 **WARNING**（含主机、原因与处置建议）——**不阻断运行**，自托管场景不受影响。私网/回环主机在 `provider=ollama` 或 `FLASHGAZE_ALLOW_PRIVATE_TARGETS=true` 下免白名单。消除告警的两个办法：把主机加入 `FLASHGAZE_API_BASE_ALLOWLIST`，或设置 `FLASHGAZE_ALLOW_UNTRUSTED_API_BASE=1`。这项检查对配置文件来源尤其重要——clone 第三方仓库携带的配置可以在无声无息中把密钥与图片导向别处。
+> **端点白名单（仅告警、不阻断）：** `api_base` 有四条互不校验的来源（环境变量、JSON 配置文件、CLI `--api-base`、WebUI 文本框），而 API Key 与全部图片内容都会被 POST 到它指向的主机。因此 `build_config` 会按白名单校验端点，未覆盖时打一条 **WARNING**（含主机、原因与处置建议）——**不阻断运行**，自托管场景不受影响。私网/回环主机在 `provider=ollama` 或 `FLASHGAZE_ALLOW_PRIVATE_TARGETS=true` 下免白名单。消除告警的两个办法：把主机加入 `FLASHGAZE_API_BASE_ALLOWLIST`（注意该值**一旦提供即整体替换**内置白名单，仍要覆盖的官方域名需一并列出），或设置 `FLASHGAZE_ALLOW_UNTRUSTED_API_BASE=1`。这项检查对配置文件来源尤其重要——clone 第三方仓库携带的配置可以在无声无息中把密钥与图片导向别处。
 
 > **代理与 pin-IP 互斥（设计如此）：** 直连层 Session 置 `trust_env=False`，`HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` 与 `REQUESTS_CA_BUNDLE` / `CURL_CA_BUNDLE` **一律不生效**——代理会自行解析目标主机名（被替换的 CA 则会破坏证书校验），从而静默旁路上述 pin-IP / Host pin / SNI pin 保证。构造期检测到其中任一变量时会打一次 `WARNING`。确需经代理访问 VLM 端点时，可改用 opt-in 的 LiteLLM 后端（`VLMClient(use_litellm=True)`）——它不走 pin-IP 直连，是否遵循环境代理由 LiteLLM 自身决定（不在本模块控制范围内）。
 
@@ -1080,7 +1145,7 @@ FlashGaze 内置 MCP Server。安装 `pip install -e ".[mcp]"` 后，在 AI 工�
 - 每个文件删除前再次校验路径边界
 - 批量删除比例护栏：待删比例超过可评分图的 95% 且已评分图总数不少于 6 时整批拦截——**一张不删**，全部候选进入 `details.blocked_files`。比例按可评分图口径计算：损坏图（评分失败，error 非 None）既不计入分子也不计入分母，不会稀释比例绕过护栏
 
-**程序化约定（护栏拦截）**：护栏触发时工具返回非 0 结果——`status="blocked"`、`code=1`、`summary.force_required=true`；响应仍是标准六字段结构，`summary` 与 `details.blocked_files` 完整可读。核对清单后显式传 `force=True` 重跑即返回 `status="success"`、`code=0`。等价 CLI（`flashgaze cleanup`）用**进程退出码 `1`** 表达同一状态并打印错误日志。即：CLI 以退出码表达，MCP 以 JSON 的 `status`/`code` 表达。
+**程序化约定（护栏拦截）**：护栏触发时工具返回非 0 结果——`status="blocked"`、`code=1`、`summary.force_required=true`；响应仍是标准六字段结构，`summary` 与 `details.blocked_files` 完整可读。恢复路径是**两步**：先以 `dry_run=True` 重取并核对清单，再把 `force=True` 与**该报告 `summary.fingerprint` 完全匹配**的 `confirm_fingerprint` 一并传入。单给 `force=True`（或配一个来自过期清单的指纹）本身就会被拦截——`status="blocked"`、`code=1`、一张不删；指纹正是「人工核对过这一批」的证明。只有 force 与指纹匹配的那次调用才返回 `status="success"`、`code=0`。等价 CLI（`flashgaze cleanup`）用**进程退出码 `1`** 表达同一状态并打印错误日志。即：CLI 以退出码表达，MCP 以 JSON 的 `status`/`code` 表达。
 
 **程序化约定（删除失败）**：个别图片删除失败（文件被其它程序占用、只读属性、与回收站跨卷）时，工具返回 `status="partial"`、`code=5`，`summary.delete_failures` 给出未删除张数、`details.delete_failures` 给出逐项 `{path, reason}`；其余图片照常处理，删除失败的低分图仍留在磁盘上（回收站移动绝不降级为直接 `unlink`）。全部删除成功时 `summary.delete_failures` 显式为 `0`。等价 CLI（`flashgaze cleanup`）用**进程退出码 `5`** 表达同一状态。
 
@@ -1126,7 +1191,7 @@ flashgaze-webui --host 0.0.0.0 --port 8080
 1. **目录与基础参数** — 目录、`--top`、`--threshold`、`--scene`、`--no-vlm`
 2. **CV 增强维度** — 构图 / 噪点 / 色彩 / 人像 / 去重 / `--no-downscale`
 3. **权重** — 五维滑块（清晰度 / 曝光 / 构图 / 噪点 / 色彩），由 `build_config` 自动归一化
-4. **VLM 配置** — `--vlm-provider`、API Key、`--api-base`、`--model`、`--workers`（勾选「禁用 VLM」后此区域禁用）
+4. **VLM 配置** — `--vlm-provider`、API Key、`--api-base`、`--model`（勾选「禁用 VLM」后这四项变灰）与 `--workers`，后者在离线模式下**保持可编辑**——纯 CV 评分同样走进程池并发
 5. **评分结果** — JSON 摘要 + 可排序表格（列与 CSV 完全一致）
 6. **高分图预览** — 按分数降序的缩略图画廊，含分数 / 入选标记 / VLM 理由
 7. **筛选** — 按入选 / 最低分数 / 关键字筛选表格与画廊（不影响导出）
@@ -1186,7 +1251,7 @@ if result.returncode == 0:
 | `FLASHGAZE_WEIGHTS` | 评分权重 JSON，如 `{"sharpness":0.5,"exposure":0.5}`——`sharpness`/`exposure` 必填，`composition`/`noise`/`color` 可选，自动归一化到总和 1 | 内置 `清晰度 0.5 / 曝光度 0.5` |
 | `FLASHGAZE_DEDUP_THRESHOLD` | 去重（`--enable-dedup`）PHash 汉明距离阈值，越小越严格 | `8` |
 | `FLASHGAZE_ALLOW_PRIVATE_TARGETS` | **SSRF 逃生通道**：设为 `true` 可放行 VLM 端点解析到私网/链路本地/保留/组播地址（如自托管的 qwen/openai 兼容端点）。默认 `false`，对公网云 provider 维持防护。`ollama` 已默认放行私网目标，故此变量仅用于非 ollama 的自托管场景。 | `false` |
-| `FLASHGAZE_API_BASE_ALLOWLIST` | **端点白名单**：逗号分隔的主机后缀，用于追加内置官方域名（`dashscope.aliyuncs.com`、`dashscope-intl.aliyuncs.com`、`api.openai.com`、`api.anthropic.com`、`localhost`、`host.docker.internal`）。匹配口径为「主机相等或以 `.条目` 结尾」，故 `dashscope.aliyuncs.com.evil.com` **不会**误命中。 | 内置官方域名 |
+| `FLASHGAZE_API_BASE_ALLOWLIST` | **端点白名单**：逗号分隔的主机后缀。**一旦提供即整体替换内置官方域名清单，不是追加**（默认清单：`dashscope.aliyuncs.com`、`dashscope-intl.aliyuncs.com`、`api.openai.com`、`api.anthropic.com`、`localhost`、`host.docker.internal`；值为空或非法时回落这六项）。只想加一个自托管域名而不再列出官方域名，六项官方端点就会开始告警——需一并列出才两者兼得。匹配口径为「主机相等或以 `.条目` 结尾」，故 `dashscope.aliyuncs.com.evil.com` **不会**误命中。 | 内置官方域名 |
 | `FLASHGAZE_MCP_ALLOWED_ROOTS` | **MCP 上传/单图评分的允许扫描根**：逗号分隔的目录白名单，`score_uploaded_images` / `score_single_image` 仅允许读取这些目录内的图片，越界路径在做任何文件访问前即被拒绝；无关闭边界的开关。 | MCP 服务器启动目录 |
 | `FLASHGAZE_ALLOW_UNTRUSTED_API_BASE` | 设为 `1`/`true`/`yes`/`on` 表示已确认当前 `api_base` 可信，非白名单端点不再告警（自托管 / 自建网关场景）。 | 未设置 |
 | `FLASHGAZE_TIMEOUT` | 请求超时（秒） | `30` |
@@ -1224,7 +1289,7 @@ if result.returncode == 0:
 >
 > `--exif --no-exif-backup` 未加 `--force` 时同样返回 `1`：无回滚点的原地改写原图属危险操作，必须显式确认。
 >
-> `flashgaze cleanup` 被批量删除护栏拦截时同样返回 `1`（一张未删，确认后加 `--force` 重跑）；MCP 侧对应 `status="blocked"` / `code=1`，详见 [MCP Server](#mcp-server)。
+> `flashgaze cleanup` 被批量删除护栏拦截时同样返回 `1`（一张未删）；恢复须先 dry_run 取 `summary.fingerprint`，再以 `--apply --force --confirm-fingerprint <指纹>` 重跑——**单独加 `--force` 会在评分开始前就被拒**，同样是 `1`。MCP 侧对应 `status="blocked"` / `code=1`，详见 [MCP Server](#mcp-server)。
 >
 > `flashgaze score --export` 存在未能导出的入选图时返回 `5`（此前此类部分失败静默返回 0）；MCP `export_selected_images` 对应 `status="partial"` / `code=5`，`summary.export_failed` 给出失败计数、`details.failures` 列出逐项原因。零失败时 CLI 仍为 0，MCP 仍为 `status="success"` 且显式 `summary.export_failed=0`。
 >
@@ -1239,7 +1304,7 @@ pytest tests/ -v --cov=flashgaze --cov-report=term-missing
 
 默认运行带内置过滤（`pyproject.toml` 的 `[tool.pytest.ini_options]`，审查项 M-17）：`addopts = '-m "not e2e"'` + `testpaths = ["tests"]`——裸跑 `pytest` / `pytest tests/` 只收集 `tests/`，不触及浏览器 E2E 与顶层 `benchmarks/`，「什么算一次通过」由此有机器可执行的单一定义。命令行显式 `-m` 会整体覆盖默认（自定义时须写全排除项，如 `-m "not slow and not e2e"`）；`-o addopts=` 整体解除默认过滤；一键入口为 `make test` / `make test-all`。
 
-默认口径下共收集 1080 项测试（装齐安全 extras 时实测 1052 通过 / 28 跳过，10 项浏览器 E2E 被默认过滤取消选择；gradio 缺失的环境 WebUI 各层自动跳过），覆盖 CV 引擎、VLM 客户端、混合评分器、导出器、CLI 解析器、端到端流程、可复现性、配置层，以及下述 Web GUI 三层覆盖。
+**带日期的实测快照 —— 2026-10-17，Windows / Python 3.12.10，已装 extras `mcp,gui,exif,xlsx`：** `python -m pytest tests/ --collect-only -q` 报 `1058/1096 tests collected (38 deselected)`；`python -m pytest tests/ -q` 报 `1030 通过 / 28 跳过 / 38 取消选择`。被取消选择的 38 项来自**两个**模块级 `e2e` 套件——Playwright Web GUI 用例（`tests/e2e/test_webui_e2e.py`）**与** CLI 端到端用例（`tests/test_cli_e2e.py`）；两者都以模块级 `pytestmark` 声明，故被默认过滤一并排除。总数随已装 extras 变动（依赖缺失的模块在收集阶段即跳过），因此把它当快照读，别当契约；长期成立的不变量是默认过滤本身与 `38 deselected` 这个数。覆盖 CV 引擎、VLM 客户端、混合评分器、导出器、CLI 解析器、端到端流程、可复现性、配置层，以及下述 Web GUI 三层覆盖。
 
 覆盖率门禁：总覆盖率须 ≥ 80%（配置在 `.coveragerc`，本地与 CI 的同一条 `pytest --cov` 命令都会强制执行）。`mcp_server`、`webui/app` 与 `exif_writer` 已纳入门槛——CI 主矩阵加装 `mcp,gui,exif,heic` 轻量 extras 使其测试在主矩阵真实执行（缺依赖时对应测试跳过、门禁失真，实测仅装 `mcp` 时总覆盖率 79.31% 不达标）。三个重依赖可选模块（`xlsx_exporter`、`deduplicator`、`portrait_engine`）不纳入主门槛，由 CI 的 `extras` job 硬门槛强制（`.coveragerc-extras`：无条件总下限 50% + `ci.yml` 逐模块下限；见 `docs/extras-governance.md`）。
 
@@ -1304,16 +1369,17 @@ python -m ruff check .
 
 目前 ruff 与 mypy **仅在 CI 中运行**，不合规代码仍可能被提交。仓库内置两套互补的本地守护，复用与 CI `lint` / `typecheck` job **完全相同**的命令（版本与规则统一来自 `pyproject.toml`，单一配置源、零漂移）：
 
-- **pre-commit 钩子**（`.pre-commit-config.yaml`）：每次 `git commit` 自动运行 `ruff check`、`ruff format --check` 与 `mypy`。只需安装一次：
+- **pre-commit 钩子**（`.pre-commit-config.yaml`）：每次 `git commit` 自动运行 `ruff check`、`ruff format --check`、`mypy` 与 `python -m tools.check_agents_md`（AGENTS.md 章节完整性 + 作用域文档存在性）。只需安装一次：
   ```bash
   pip install -r requirements-dev.txt
   pre-commit install
   ```
-  之后每个提交都会被拦截，直到三项检查全部通过。对所有文件手动运行：`pre-commit run --all-files`。
+  之后每个提交都会被拦截，直到四项检查全部通过。四个钩子均声明 `always_run: true`，因此**每次提交都会执行**，与改动的是哪些文件无关——覆盖面与 CI 一致。对所有文件手动运行：`pre-commit run --all-files`。
 
 - **Makefile**（一键手动检查，也便于本地复刻 CI）：
   ```bash
   make check        # lint + format-check + typecheck（完整本地守护）
+  make verify       # check + test（不含会改写文件的 format）
   make lint         # python -m ruff check .
   make format       # python -m ruff format .
   make format-check # python -m ruff format --check .
@@ -1361,7 +1427,7 @@ python -m ruff check .
 **认证方式（PyPI Trusted Publishing / OIDC）**：无需任何仓库 Secret。首次发布前，须在本项目的 PyPI 页面（*Publishing* 区块）注册一个 *Trusted Publisher*（受信任发布者），填写：
 
 - **Repository（仓库）**：`https://github.com/<owner>/<repo>`（即本仓库）
-- **Workflow name（工作流名）**：`release`（`.github/workflows/release.yml` 的文件名，不含 `.yml`）
+- **Workflow name（工作流名）**：`release.yml`——即 `.github/workflows/release.yml` 的**文件名，含 `.yml` 扩展名**（GitHub 官方 PyPI-OIDC 配置文档给出的值就是 `release.yml`）。**不要**填工作流的显示名：该文件声明的是 `name: Release`，而 PyPI 比对的是文件名。填错会让首次 `publish` 以一句看不懂的 trusted-publisher 不匹配失败。
 - **Environment（环境）**：留空
 
 `publish` job 已声明 `permissions: id-token: write`，`pypa/gh-action-pypi-publish` action 会自动用该短期 OIDC 令牌换取 PyPI 凭据完成发布——全程不存储任何长期有效的 API Token。

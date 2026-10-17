@@ -15,7 +15,8 @@ PEP 695（Python 3.12 引入）提供了更简洁的类型参数语法：
 
 - `[project] requires-python = ">=3.10"`，因此 `[tool.mypy] python_version = "3.10"`、`[tool.ruff] target-version = "py310"`，类型检查只覆盖最低支持版本的语义。
 - mypy 复用 Python `ast` 解析 stub 与源码，**在 `python_version=3.10` 目标下无法解析 PEP 695 语法**，会报语法级错误（而非类型错误），因此代码库现阶段**禁止**使用 PEP 695 语法，继续沿用 `TypeVar` / `typing.TypeAlias` / `Generic` 传统写法。
-- 依赖侧连带约束：`numpy>=1.24.0,<2.3` 的上限同样源于 PEP 695——numpy 2.3 起自带使用 `type` 语法的 stubs，与 mypy 的 py3.10 目标冲突。
+- 依赖侧连带约束：`numpy>=1.24.0,<2.3` 的上限有**两个独立成因**，任一未解除都不能放宽——① numpy **2.3** 起 `requires-python` 升至 `>=3.11`（官方发布说明：2.3.0 支持 Python 3.11–3.13），与本项目 `requires-python = ">=3.10"` 直接冲突，这是当前 `<2.3` 的**生效约束**；② numpy **2.5+** 内置 stubs 使用 PEP 695 `type` 语法，与 mypy 的 py3.10 目标冲突。
+- mypy 的 PEP 695 解析门槛实测为 **3.12**（mypy 1.20.2：`--python-version 3.10` 与 `3.11` 均报 `Type statement is only supported in Python 3.12 and greater`，仅 `3.12` 通过）。因此「把 mypy 目标升到 3.11」**不能**解除成因 ②，解锁下限必须是 3.12+。
 
 > 上游跟踪现状（截至 2026-08）：mypy issue [#15238 "Support for PEP 695"](https://github.com/python/mypy/issues/15238) 仍指出低 `python_version` 目标下解析受限，未完整支持向下兼容。本治理文档即用于持续跟踪该进展。
 
@@ -29,7 +30,8 @@ requires-python = ">=3.10"            # pyproject [project]
         │
         ├─→ target-version = "py310"  # pyproject [tool.ruff]（ruff 仅 lint/format，不解析 PEP 695 语义）
         │
-        └─→ numpy>=1.24.0,<2.3        # 上限：numpy 2.3 stubs 含 PEP 695 `type` 语法，与 py3.10 目标冲突
+        └─→ numpy>=1.24.0,<2.3        # 上限双因：① numpy 2.3 起 requires-python >=3.11（生效项，撞本项目 3.10 下限）
+        #                             #    ② numpy 2.5+ stubs 含 PEP 695 `type`，mypy 目标 <3.12 无法解析
 ```
 
 **单一事实来源（SSoT）**：本文件。配置处（`pyproject.toml`、`requirements-dev.txt`）仅保留一行指向本文件的引用注释，避免约束链信息碎片化导致维护漂移。
@@ -43,7 +45,7 @@ requires-python = ">=3.10"            # pyproject [project]
 | mypy PEP 695 支持总议题 | [python/mypy#15238](https://github.com/python/mypy/issues/15238) | 是否声明支持 `python_version < 3.12` 目标下的 PEP 695 解析；是否合入相关 PR |
 | mypy 发布说明 | [mypy changelog](https://mypy.readthedocs.io/en/stable/changelog.html) | 出现 "PEP 695" + "older Python versions" / "backport parsing" 类条目 |
 | mypy 版本区间 | `requirements-dev.txt` `mypy>=1.11,<2` | 解锁后是否需放宽上界以接纳新特性版本 |
-| numpy stubs PEP 695 使用 | `numpy` 2.3+ changelog | numpy stubs 是否回退/隔离 PEP 695 语法，或 mypy 已能兼容 |
+| numpy stubs PEP 695 使用 | `numpy` 2.3（`requires-python` 跃迁）与 2.5+（stubs 语法）发布说明 | 2.3 起是否恢复 py3.10 支持；stubs 是否回退/隔离 PEP 695 语法，或 mypy 已能兼容 |
 | 项目 Python 下限决策 | `pyproject.toml` `requires-python` | 是否将下限提升至 `>=3.12` |
 
 **本地快速验证命令**（跟踪复核时用）：

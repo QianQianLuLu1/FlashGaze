@@ -3,6 +3,8 @@
 > 状态：已完成（2026-09-06，实测记录见文末「执行结果」）
 > 任务类型：增强类（默认过滤此前不存在，新增用例在改动前因功能不存在而失败）
 > 背景：审查报告 `docs/review/代码质量与架构审查报告.md:847` M-17——默认 `pytest` 不排除 e2e / slow / bench_full，CI 与本地口径靠手工参数维持；:857 修复方向、:1722 汇总表建议的 CI 裸跑校验一并落地。
+> 来源标注：该审查报告为本地一次性产物，被 `.gitignore` 的 `/docs/review/` 规则忽略、不随仓库分发；引用的行号（:847/:857/:1722）在报告本地版本上成立。落地证据以 `pyproject.toml` addopts、ci.yml 裸跑门禁步骤与 `CHANGELOG.md` M-17 条目为准。
+> 批注（2026-10-17）：本文「执行结果（实测）」表里的 `1076/1086 collected (10 deselected)` 与 §5 第 121 行的反例已过时——`tests/test_cli_e2e.py` 现已加模块级 `pytestmark = [pytest.mark.e2e]`（`tests/test_cli_e2e.py:19`），默认口径下排除数由 10 增至 38（现值 `1058/1096 collected (38 deselected)`）；同段的另一反例 `tests/test_cli_terminal_e2e.py` 仍无 marker、仍被默认收集（7 项），该反例成立。原文按其完成日期保留，不改写。
 
 ## 〇、结论先行
 
@@ -29,7 +31,7 @@
 
 ### 4. 验证能力
 - **A 档**：pytest 存在（pyproject.toml:125-130），本机有 pytest 运行痕迹（.pytest_cache/、_pytest_full.log）。ruff/mypy/pre-commit 均配置（pyproject:139-211、.pre-commit-config.yaml）。pytest-timeout **缺失**（门禁计划:55 明文未安装，用例自带看门狗，与本改动无关）。GitHub Actions 无法本地执行 → CI 改动只能静态验证，如实标注。
-- 环境注意：中文路径工作区，pytest 全量须带 `PYTHONIOENCODING=utf-8`（_plans/M16 计划:49 约定）。
+- 环境注意：中文路径工作区，pytest 全量须带 `PYTHONIOENCODING=utf-8`（Windows 中文环境下控制台默认 GBK 编码，pytest 回显含中文的用例名/断言信息会抛 `UnicodeEncodeError`，跑全量前先设该环境变量；此约定原记于本地一次性 M16 计划文档，该文档存放于 gitignore 的 `_plans/`，2026-10-17 已归档摘除，不随仓库分发）。
 
 ### 5. 历史约束 / 偏离 M-17 原文示例的理由
 - **弃用原文示例的两个硬约束**：① `--ignore` 一旦写入 addopts 无法用 CLI 旗标解除（只能 `-o addopts=` 整体重写），且其对「显式传入路径」是否生效依版本而定，会波及 README/CI 的 e2e 直跑命令；② `not bench_full` 进 addopts 会静默破坏 benchmark.yml:109 nightly（该分支不传 -m）。而 bench_full 只在顶层 benchmarks/，`pytest tests/` 永不收集，裸跑 pytest 触及 benchmarks 的问题由 `testpaths=["tests"]` 兜住 → 默认只需 `-m "not e2e"`。
