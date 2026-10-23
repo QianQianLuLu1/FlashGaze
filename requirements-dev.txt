@@ -1,5 +1,14 @@
 pytest>=7.4.0,<10
 pytest-cov>=4.1.0,<8
+# 覆盖率引擎钉死单版本：coverage 7.17.0（2026-10-22 发布）起 requires-python >=3.11，
+# 未钉版时 CI 12 腿矩阵会同时跑两个测量引擎——py3.10 腿解析 7.16.2、其余腿 7.17.0。
+# 实证：2026-10-23 c202ed2 运行的 12 份 coverage.xml 中 version 属性分裂为 7.16.2/7.17.0，
+# 跨腿覆盖率数字不再同口径，差异无法区分「代码变化」与「引擎变化」。
+# pytest-cov 7.1.0 要求 coverage[toml]>=7.10.6，7.16.2 满足；7.16.2 requires-python >=3.10
+# 且发布 cp310–cp313 wheel，覆盖全部矩阵腿。
+# 解除条件：测试矩阵放弃 py3.10（与 docs/PEP695_COMPAT.md 路线 B「最低 Python 升 3.12+」
+# 联动）后改回区间式（如 >=7.17,<8）；解除前必须全 12 腿重跑并确认 fail_under=80 口径不回退。
+coverage[toml]==7.16.2
 # 性能基准（基准套件在 benchmarks/，CI 由 benchmark.yml 的 benchmark job 执行；
 # 回归阈值与本地运行命令见 docs/bench/README.md）
 pytest-benchmark>=4.0,<6

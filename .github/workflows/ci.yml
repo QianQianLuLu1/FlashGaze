@@ -58,6 +58,7 @@ jobs:
           --cov=flashgaze
           --cov-report=term-missing
           --cov-report=xml:coverage.xml
+          --junitxml=junit.xml
 
       # 只在一条矩阵腿上写摘要，避免 12 份重复表格
       - name: Write coverage to job summary
@@ -71,6 +72,79 @@ jobs:
           name: coverage-${{ matrix.os }}-py${{ matrix.python-version }}
           path: coverage.xml
           if-no-files-found: warn
+
+      # coverage-* 产物刻意只含 coverage.xml，因此「这条腿到底挂在哪」此前无从判断：
+      # 2026-10-23 的 12 腿产物里 macos-py3.10 / windows-py3.10 有 6 行分支没被覆盖，
+      # 却无法区分是用例失败、报错还是根本没跑。junit 单独成产物（不塞进 coverage-*），
+      # 保持既有「下载 12 个 zip 比对覆盖率」的习惯不被破坏。范式与 extras-health.yml
+      # 的 --junitxml 采集端一致。
+      - name: Upload junit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: junit.xml
+          if-no-files-found: warn
+
+      # 把本腿的通过/失败/错误一眼可见地写进 job summary，并对每条失败发 ::error::
+      # 注解（GitHub 会聚到 checks 摘要，无需下载产物）。
+      - name: Summarize leg test outcome
+        if: always()
+        shell: bash
+        env:
+          LEG_LABEL: test (${{ matrix.os }}, py${{ matrix.python-version }})
+        run: |
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          label = os.environ.get("LEG_LABEL", "test")
+          if not os.path.exists("junit.xml"):
+              # 反例护栏：pytest 没跑到写 junit（job 超时被取消 / 启动即崩）时只提示。
+              # 真正的门禁是 pytest 自身退出码，此处绝不因缺产物把腿判红。
+              print("::notice::junit.xml 缺失，本腿无测试摘要（pytest 可能在写出前就终止）")
+              raise SystemExit(0)
+          try:
+              root = ET.parse("junit.xml").getroot()
+          except ET.ParseError as exc:
+              print(f"::notice::junit.xml 解析失败，跳过本腿摘要: {exc}")
+              raise SystemExit(0)
+
+          tot = {
+              k: sum(int(s.get(k, 0) or 0) for s in root.iter("testsuite"))
+              for k in ("tests", "failures", "errors", "skipped")
+          }
+          bad = []
+          for tc in root.iter("testcase"):
+              node, kind = tc.find("failure"), "FAILED"
+              if node is None:
+                  node, kind = tc.find("error"), "ERROR"
+              if node is None:
+                  continue
+              head = (node.get("message") or "").strip().splitlines()
+              ref = f"{tc.get('classname', '')}::{tc.get('name', '')}"
+              # GitHub 的 ::error:: 用 % 做转义（覆盖率失败消息里就有 "80.0%"），
+              # 不转义会让注解文本被截断/乱码；换行已按首行切掉。
+              first = (head[0] if head else "").replace("%", "%25")
+              bad.append(f"{kind} {ref}" + (f" — {first}" if first else ""))
+
+          for line in bad[:50]:
+              print(f"::error::{line}")
+          if len(bad) > 50:
+              print(f"::error::另有 {len(bad) - 50} 条未逐条列出，全量见 junit 产物")
+
+          path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if path:
+              with open(path, "a", encoding="utf-8") as f:
+                  f.write(
+                      f"**{label}**: {tot['tests']} tests, {tot['failures']} failed, "
+                      f"{tot['errors']} error, {tot['skipped']} skipped\n"
+                  )
+                  if bad:
+                      f.write("\n".join(f"- {b}" for b in bad[:50]) + "\n")
+          print(f"[{label}] tests={tot['tests']} failed={tot['failures']} "
+                f"error={tot['errors']} skipped={tot['skipped']}")
+          PY
 
       - name: Upload coverage to Codecov
         if: always()
@@ -272,7 +346,13 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
-          flags: extras-${{ matrix.os }}
+          # flag 名必须与 codecov.yml 的 flags: 声明逐字一致。此前写 extras-${{ matrix.os }}
+          # 实投 extras-ubuntu-latest / extras-macos-latest，与声明的 extras-ubuntu /
+          # extras-macos 永不相交 → 声明里的 carryforward/informational 全部落空，
+          # 可选模块的滚动覆盖率从未真正聚合（2026-10-23 产物复核发现）。
+          # 用查表而非字符串拼接：新增 extras 腿时必须在此登记，否则 tests/
+          # test_coverage_gate_contract.py 的 flag 对齐用例直接判红。
+          flags: ${{ fromJSON('{"ubuntu-latest":"extras-ubuntu","macos-latest":"extras-macos"}')[matrix.os] }}
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
 

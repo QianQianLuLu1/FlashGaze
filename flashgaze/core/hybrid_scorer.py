@@ -962,7 +962,7 @@ class HybridScorer:
                         if leaked or rebuild or exhausted or pool_broken:
                             # _processes 为私有 API（3.10-3.13 均存在，CPython 自家
                             # _join_executor_internals 同样以它枚举 worker），getattr
-                            # 防御未来版本变动；fake 池无此属性时安全跳过。
+                            # 防御未来版本变动；fake 池默认空表（或无此属性）时安全跳过。
                             proc_map = getattr(pool, "_processes", None) or {}
                             procs = list(proc_map.values())
                             try:

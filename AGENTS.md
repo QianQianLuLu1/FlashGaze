@@ -40,6 +40,7 @@
 | 3.4 | json5 容忍 VLM JSON | VLM 返回可能含围栏或尾随逗号 |
 | 3.5 | mypy strict 全量 | 禁止新增 `# type: ignore` |
 | 3.6 | pytest 默认口径 | 裸跑不含 e2e/benchmarks |
+| 3.7 | coverage 引擎钉版 | 不钉时 12 腿矩阵分裂两个引擎（7.17.0 起 requires-python ≥3.11）；平台不可达行用 skipif 明写，不加 pragma |
 
 > 完整细节 → [docs/agent-context/pitfalls.md](docs/agent-context/pitfalls.md)
 
@@ -54,6 +55,7 @@
 | 4.3 | M-05 | BrisqueIntegrityError | 供应链信号靠专属日志标签 + 顺序敏感 except 分支辨识；退出码仍是 `IMAGE_ERROR(4)`，不另设专属码 |
 | 4.4 | M-17 | pytest 默认口径校验 | 默认口径必须用 CI 守卫 |
 | 4.5 | H-10/11/12 | MCP 高危审查 | MCP 安全护栏必须比 CLI 更严格 |
+| 4.6 | 产物复核 | 12 腿覆盖率产物 | 只在 1/12 腿命中的行是测试稳定性信号而非噪声；产物只含 coverage.xml 时「腿为什么红」不可诊断 |
 
 > 完整细节 → [docs/agent-context/fixes.md](docs/agent-context/fixes.md)
 
@@ -108,7 +110,7 @@ docs/agent-context/         # 作用域文档（architecture / pitfalls / fixes 
 
 | Job | 触发 | 阻塞 | 关键步骤 |
 |---|---|---|---|
-| `test` | push/PR | ✅ | 12 腿矩阵（3 OS × 4 Python），覆盖率 fail_under=80 |
+| `test` | push/PR | ✅ | 12 腿矩阵（3 OS × 4 Python），覆盖率 fail_under=80；每腿产出 `coverage-*`（只含 coverage.xml）+ `junit-*` 两个产物，并把通过/失败/错误写进 job summary |
 | `typecheck` | push/PR | ✅ | mypy strict 全量（`files = flashgaze + tests + tools/bench`） |
 | `lint` | push/PR | ✅ | ruff check + format --check |
 | `agents-md-integrity` | push/PR | ✅ | `python -m tools.check_agents_md`：AGENTS.md 1-9 节齐全 **且** `docs/agent-context/` 四篇作用域文档存在（纯 stdlib，无需装依赖） |
@@ -156,6 +158,6 @@ docs/agent-context/         # 作用域文档（architecture / pitfalls / fixes 
 
 ---
 
-**最后更新**：2026-10-23（§4.3 M-05 核心教训订正为「专属日志标签 + 顺序敏感 except 分支，退出码仍 `IMAGE_ERROR(4)`」，原述「必须用专属退出码」与代码及 `tests/test_cli_main.py` 四处断言不符；`docs/plans/` 11 份已完成的一次性修复计划归档移出仓库，覆盖率逐模块下限的取值溯源改由 `docs/extras-governance.md` §2.1 承载；`CHANGELOG.md` 的 PEP 695 解锁门槛与 `pyproject.toml` 注释一并对齐为 3.12+）
+**最后更新**：2026-10-23（复核 12 腿覆盖率产物：无门禁失败，但定位到四类真实问题并修复——新增假池 `_FakeProc` + `__procs__` 使「terminate 未生效→升级 kill」由 1/12 腿计时偶然变为确定性覆盖；补 `atomic_write` 两处 OSError 兜底与 `image_io._is_junction` lstat 竞态用例（后者此前 12/12 腿未覆盖）；test job 逐腿产出 junit 与失败摘要（`coverage-*` 产物保持只含 coverage.xml）；extras 投递 Codecov 的 flag 名与 `codecov.yml` 声明对齐；`coverage[toml]` 钉死 7.16.2 消除 12 腿双引擎。§3.7 / §4.6 / §7 `test` 行与 `tests/test_coverage_gate_contract.py`（8→11 条）同步）
 
-**上次更新**：2026-10-17（订正 §5 与 Makefile 不符的五个目标注释、§6 幻影路径 `utils/path_safety`、§7 缺失的 `agents-md-integrity` / `check-strict` / `e2e-webkit` 三行、§2 清理护栏与 §3.1 numpy 上限成因；`docs/agent-context/` 四篇与守卫脚本首次入库）
+**上次更新**：2026-10-23（§4.3 M-05 核心教训订正为「专属日志标签 + 顺序敏感 except 分支，退出码仍 `IMAGE_ERROR(4)`」，原述「必须用专属退出码」与代码及 `tests/test_cli_main.py` 四处断言不符；`docs/plans/` 11 份已完成的一次性修复计划归档移出仓库，覆盖率逐模块下限的取值溯源改由 `docs/extras-governance.md` §2.1 承载；`CHANGELOG.md` 的 PEP 695 解锁门槛与 `pyproject.toml` 注释一并对齐为 3.12+）

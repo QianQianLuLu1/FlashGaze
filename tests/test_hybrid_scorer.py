@@ -1200,6 +1200,48 @@ def test_phase1_pool_fast_workers_not_falsely_timed_out(
 # module+qualname 重导入后执行，天然绕开 monkeypatch 进不了子进程的限制）。
 
 
+class _FakeProc:
+    """进程桩：只实现 hybrid_scorer 拆池块（:966-982）用到的 5 个成员。
+
+    「terminate 未生效 → 升级 kill」此前只被 @slow 真进程池用例偶然踩到——
+    2026-10-23 的 12 腿 CI 产物中仅 ubuntu-py3.10 一条覆盖 974/978，且该用例
+    断言的是墙钟有界而非强杀行为，回归不会变红。桩把计时偶然换成确定判定：
+    survive_terminate=True 时 is_alive() 恒真；raise_on 指定哪个方法抛 OSError
+    以驱动「进程已抢先退出」竞态兜底。join() 记录超时值但不等待，所以
+    _TERMINATE_JOIN_SEC=5.0 在本用例里零开销。
+    """
+
+    def __init__(self, pid: int, *, survive_terminate: bool = False, raise_on: str = "") -> None:
+        self.pid = pid
+        self.terminated = False
+        self.killed = False
+        self.join_timeout: float | None = None
+        self._survive = survive_terminate
+        self._raise_on = raise_on
+        self._alive = True
+
+    def _boom(self, where: str) -> None:
+        if self._raise_on == where:
+            raise OSError(f"模拟进程已退出的竞态: {where}")
+
+    def terminate(self) -> None:
+        self._boom("terminate")
+        self.terminated = True
+        self._alive = self._survive
+
+    def join(self, timeout: float | None = None) -> None:
+        self._boom("join")
+        self.join_timeout = timeout
+
+    def is_alive(self) -> bool:
+        self._boom("is_alive")
+        return self._alive
+
+    def kill(self) -> None:
+        self._boom("kill")
+        self.killed = True
+
+
 # 3.10 目标下无 typing.Self，且 typing_extensions 未在本项目依赖中声明，
 # __enter__ 返回自身类名并标注 PYI034 豁免。
 def _install_fake_pool(monkeypatch: pytest.MonkeyPatch, plans: dict[str, Any]) -> list[Any]:
@@ -1217,6 +1259,10 @@ def _install_fake_pool(monkeypatch: pytest.MonkeyPatch, plans: dict[str, Any]) -
       修复前的生产代码 initargs 只有 4 个引擎布尔参数，无 Event 可置位。
     - callable(gen) -> dict   代际感知计划：gen 为本次评分中的池代数（0 起），
       用于验证「池代际重建」——重建后同一张图的派发行为可以不同。
+    特殊键 "__procs__"（非路径）：list[dict] | callable(gen) -> list[dict]，每项是
+      _FakeProc 的构造参数（survive_terminate / raise_on），用于驱动拆池阶段的
+      terminate→kill 升级与 OSError 竞态。缺省为空表——生产代码对「无 _processes
+      属性」与「空表」同样安全跳过，故既有假池用例行为逐字节不变。
     未列出的 path 默认立即正常完成。
     返回值供用例断言实际创建了几代假池（重建次数 + 1）。
     """
@@ -1230,6 +1276,12 @@ def _install_fake_pool(monkeypatch: pytest.MonkeyPatch, plans: dict[str, Any]) -
             self._threads: list[threading.Thread] = []
             self._gen = len(created)  # 本池的代数索引（0 起）
             created.append(self)
+            procs_spec = plans.get("__procs__", [])
+            if callable(procs_spec):
+                procs_spec = procs_spec(self._gen)
+            self._processes: dict[int, Any] = {
+                pid: _FakeProc(pid, **kw) for pid, kw in enumerate(procs_spec, 1)
+            }
             if brisque_broken:
                 initargs = _k.get("initargs", ())
                 if initargs and hasattr(initargs[-1], "set"):
@@ -1478,6 +1530,74 @@ def test_phase1_pool_total_wedge_falls_back_to_serial(
     assert all(r.error is None for r in results), (
         f"零完成卡死应回退串行重跑而非整批标 error: {[(r.file, r.error) for r in results]}"
     )
+
+
+def test_phase1_fake_pool_terminate_escalates_to_kill(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """拆池阶段 terminate 未生效的 worker 必须升级为 kill，且 join 带上界超时。
+
+    覆盖 hybrid_scorer 的 973-978（升级强杀）判定本身。此前该分支的唯一覆盖来自
+    @slow 真进程池用例的计时偶然（2026-10-23 的 12 腿 CI 产物里只有 ubuntu-py3.10
+    命中，其余 11 腿 974/978 常年 Missing），且那条用例断言墙钟有界、从不检查
+    强杀是否发生——删掉 proc.kill() 也不会变红。桩驱动后三平台一致、不依赖计时，
+    因此不打 slow：12 条腿与 make test 都必须跑到。
+    """
+    monkeypatch.setattr(hs, "PER_IMAGE_TIMEOUT_SEC", 0.3)
+    hang = _write_jpg(tmp_path, "hang.jpg", 0)
+    good = _write_jpg(tmp_path, "good.jpg", 1)
+    pools = _install_fake_pool(
+        monkeypatch,
+        {
+            hang: {"hang": True},
+            good: {},
+            "__procs__": [{"survive_terminate": True}],
+        },
+    )
+
+    scorer = HybridScorer(CVEngine(), None, _config(directory=str(tmp_path), workers=2, top=10))
+    start = time.monotonic()
+    results = scorer.score_paths([hang, good])
+    assert time.monotonic() - start < 10.0, "升级 kill 后整批仍须有界返回"
+
+    hang_r = next(r for r in results if r.file == "hang.jpg")
+    assert hang_r.error is not None and "阶段1超时" in hang_r.error
+
+    stub = pools[0]._processes[1]
+    assert stub.terminated is True, "拆池必须先走 terminate"
+    assert stub.join_timeout == hs._TERMINATE_JOIN_SEC, (
+        "terminate 后的 join 必须带 _TERMINATE_JOIN_SEC 上界，不得无限等待"
+    )
+    assert stub.killed is True, "is_alive() 仍为真时必须升级为 kill 强杀挂起 worker"
+
+
+def test_phase1_fake_pool_teardown_oserror_race_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """拆池时 worker 已抢先退出（terminate 抛 OSError）必须就地吞掉、不得外泄。
+
+    覆盖 hybrid_scorer 的 979-982 兜底：该 except 分支存在的意义是「不得掩盖在途
+    异常」（如 BrisqueIntegrityError 经 finally 向外传播），此前 12 条腿均未覆盖。
+    反例面：竞态后不应继续升级 kill，也不应把 OSError 冒泡成整批失败。
+    """
+    monkeypatch.setattr(hs, "PER_IMAGE_TIMEOUT_SEC", 0.3)
+    hang = _write_jpg(tmp_path, "hang.jpg", 0)
+    good = _write_jpg(tmp_path, "good.jpg", 1)
+    pools = _install_fake_pool(
+        monkeypatch,
+        {
+            hang: {"hang": True},
+            good: {},
+            "__procs__": [{"raise_on": "terminate"}],
+        },
+    )
+
+    scorer = HybridScorer(CVEngine(), None, _config(directory=str(tmp_path), workers=2, top=10))
+    results = scorer.score_paths([hang, good])
+
+    assert len(results) == 2, "竞态兜底不得让批次丢图或抛出"
+    stub = pools[0]._processes[1]
+    assert stub.killed is False, "terminate 已抛 OSError，不应继续走到 kill"
 
 
 # ---------- 阶段1 真实进程池拆除（挂起 worker 强杀）集成 ----------

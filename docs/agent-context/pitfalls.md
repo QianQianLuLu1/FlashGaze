@@ -47,3 +47,22 @@
 - **原因**：e2e 需要 playwright + 浏览器，benchmarks 需要 pytest-benchmark，默认排除
 - **CI 守卫**：`Bare pytest default gate (collect-only)` 步骤验证裸跑不含 e2e/benchmarks 节点 ID
 - **本地全量**：`pytest tests/ benchmarks/ -m ""`（显式覆盖 marker 过滤），或 `make test-all`（等价 `-o addopts=` 整体清空默认过滤）
+
+## 3.7 覆盖率测量引擎与平台不可达行
+
+- **约束**：`requirements-dev.txt` 钉死 `coverage[toml]==7.16.2`（单版本，不用区间）
+- **原因**：coverage 7.17.0（2026-10-22 发布）起 `requires-python >=3.11`。不钉版时
+  CI 12 腿矩阵会被 resolver 按 Python 版本分裂成两个引擎（py3.10 腿 7.16.2、其余
+  7.17.0，2026-10-23 `c202ed2` 那轮 12 份 `coverage.xml` 的 `version` 属性实证），
+  跨腿覆盖率不再同口径——差异无法区分「代码变了」还是「引擎变了」。`coverage` 只经
+  `pytest-cov` 间接引入，所以必须显式钉它。
+- **解除条件**：测试矩阵放弃 py3.10（与 `docs/PEP695_COMPAT.md` 路线 B「最低 Python
+  升 3.12+」联动）后改回区间式；解除前须全 12 腿重跑确认 `fail_under=80` 不回退。
+- **契约测试**：`tests/test_coverage_gate_contract.py::test_coverage_engine_is_pinned_to_single_version`
+- **平台不可达行的记账口径**：`utils/atomic_write.py` 的 `os.chown` 体（114-118）在
+  Windows 腿永不可执行（`hasattr(os, "chown")` 恒 False），`utils/image_io.py:145`
+  的非 nt 早返回在 POSIX 腿之外不可达。这类行**不加 `# pragma: no cover`**（pragma 会
+  连带屏蔽那些平台上的真实执行，且仓库现有 2 处 pragma 均非平台用途），也**不在
+  Windows 上伪造 `os.chown` 存在**（假的跨平台绿灯，还会掩盖有人删掉 `hasattr` 守卫
+  的回归）。口径：能跑的平台跑、跑不了的用 `skipif` 明写并留文档，Windows 腿总覆盖率
+  与 POSIX 腿相差约 ±0.1pp 属真实平台差异，不是缺陷。

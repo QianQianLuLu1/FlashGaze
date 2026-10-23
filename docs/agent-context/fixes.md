@@ -45,3 +45,51 @@
 - **H-11**：MCP export 路径未做 containment 校验（已修复：relative_to 边界）
 - **H-12**：MCP allowed_roots 未生效（已修复：配置层强制）
 - **教训**：MCP 工具是 AI Agent 主用入口，安全护栏必须比 CLI 更严格
+
+## 4.6 CI 覆盖率产物复核：跨腿不确定覆盖与不可诊断产物（2026-10-23，非审查编号项）
+
+- **问题**：用户下载 `coverage-{ubuntu,macos,windows}-latest-py3.1{0,1,2,3}.zip`
+  要求定位问题。逐份解析后**没有任何门禁失败**（12 腿总行覆盖 90.68%–90.87%，
+  门槛 `fail_under=80`；33 个被统计文件在 12 腿完全一致，无缺模块、无重复 class、
+  无 XML 解析异常）。真正暴露的是四类问题，且**产物结构上只有 `coverage.xml` 一个
+  文件**，所以「失败测试/错误栈/测试摘要」一类问题根本读不出来：
+  1. `core/hybrid_scorer.py` 的「terminate 未生效 → 升级 kill」（974/978）只在
+     **1/12** 腿上被覆盖——唯一驱动它的 `@pytest.mark.slow` 真进程池用例断言的是
+     墙钟有界，从不检查强杀是否发生，删掉 `proc.kill()` 也不会变红；
+  2. `score_one` 单图看门狗超时分支（1314-1323/1349-1350）在 macos-py3.10 与
+     windows-py3.10 未覆盖，其余 10 腿覆盖；
+  3. `utils/atomic_write.py` 109/110/116/118 与 `utils/image_io.py` 148/149 这两组
+     `except OSError` 兜底在 **12/12** 腿未覆盖（`os.chown`/`os.lstat` 从未被任何
+     测试打过）；
+  4. 测量引擎分裂（见 §3.7）+ extras 投递给 Codecov 的 flag 名与 `codecov.yml`
+     声明名错配（`extras-ubuntu-latest` vs `extras-ubuntu`，声明的
+     carryforward/informational 全部落空）。
+- **修复**：
+  - **假池桩取代计时偶然**：`tests/test_hybrid_scorer.py` 新增 `_FakeProc`，并给
+    `_install_fake_pool` 增加特殊键 `__procs__`（缺省空表，生产代码对「无
+    `_processes` 属性」与「空表」同样安全跳过，故既有 ~10 条假池用例行为逐字节不变）。
+    两条新用例不打 `slow`，12 腿与 `make test` 都跑；其中 `join_timeout ==
+    _TERMINATE_JOIN_SEC` 顺带钉住「join 必须带上界」这条契约，且假 `join()` 不等待，
+    5 秒常量零成本。
+  - **异常兜底确定性化**：`tests/test_atomic_write.py` 补 `preserve_mode` chmod 失败
+    与 chown 失败两条（后者 `skipif` 非 POSIX）；`tests/test_image_io.py` 用
+    `monkeypatch.setattr(image_io, "os", …)` **注入假 os 命名空间**而非全局改
+    `os.name`（posixpath/shutil/pytest 上报都读 `os.name`，全局改写爆炸半径不可控），
+    把 lstat 竞态与 reparse tag 三态一次打全。
+  - **产物可诊断**：test job 的 pytest 补 `--junitxml=junit.xml`，junit 单独成
+    `junit-<os>-py<ver>` 产物（**不塞进 coverage-***，保住「coverage 产物只含
+    coverage.xml」这一跨腿比对前提），并新增逐腿摘要步骤把 FAILED/ERROR 与计数写进
+    job summary、逐条发 `::error::`。
+  - **聚合与口径**：extras 的 `flags` 改为 `fromJSON` 查表（新增腿未登记即判红）；
+    `requirements-dev.txt` 钉死 `coverage[toml]==7.16.2`。
+  - **契约测试**：`tests/test_coverage_gate_contract.py` 由 8 条增至 11 条——flag 对齐、
+    逐腿 junit、引擎钉版。红灯实证：逐条回退对应配置，三条新用例各实测 FAILED，
+    回退文件还原后逐字节一致。
+- **教训**：
+  - 「覆盖率里有几行只在 1/12 条腿上命中」是**测试稳定性**信号，不是覆盖率噪声：
+    它意味着该行为实际上没有断言保护，回归不会变红。
+  - 产物内容决定可诊断范围。只上传覆盖率时，「这条腿为什么红」只能靠猜——本轮
+    问题 2 至今无法定性（失败/报错/未跑三种可能在产物里不可区分），只能交给新落地的
+    junit 下一轮给答案。**证据不足时如实标注，不猜改生产代码。**
+  - 依赖未钉版时，上游一次发布就能让同一次 CI 运行内出现两个测量引擎；`coverage`
+    这类「只经间接依赖引入」的工具同样要显式钉。

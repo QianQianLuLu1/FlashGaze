@@ -11,6 +11,8 @@ import os
 import shutil
 import struct
 import tracemalloc
+import types
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -18,6 +20,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageOps
 
+from flashgaze.utils import image_io
 from flashgaze.utils.image_io import ImageReadError, decode_bgr, iter_images
 
 
@@ -201,6 +204,47 @@ def test_is_junction_helper(tmp_path: Path) -> None:
     shutil.rmtree(real)  # 断链后 tag 仍可由 lstat 读出（不跟随目标）
     assert _is_junction(link) is True
     assert _is_junction(tmp_path) is False
+
+
+def test_is_junction_lstat_outcome_via_injected_os(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_is_junction 的三条 lstat 结论用注入假 os 命名空间打全，三平台一致。
+
+    真实 junction 用例（_make_junction）在非 Windows 上如实 skip，因此
+    「lstat 竞态失败→按非 junction 处理」这条兜底在 12 条 CI 腿上无一覆盖，
+    「reparse tag 命中」在 8 条 POSIX 腿上也不可达——两侧都是平台死区，
+    只能靠替身把判定逻辑本身钉住（真 junction 用例保留为 Windows 集成真相）。
+
+    实现选择：只替换 image_io 模块内的 os 引用，**绝不 monkeypatch 真 os 模块的
+    os.name**——posixpath/ntpath、shutil、pytest 自身上报都读 os.name，全局改写
+    的爆炸半径不可控；而 _is_junction 只读 os.name 与 os.lstat，是叶子函数。
+    """
+
+    class _NtOs:
+        """只暴露 _is_junction 用到的两个成员的最小 os 替身。"""
+
+        name = "nt"
+
+        def __init__(self, lstat_fn: Callable[[Any], Any]) -> None:
+            self._lstat_fn = lstat_fn
+
+        def lstat(self, path: Any) -> Any:
+            return self._lstat_fn(path)
+
+    def _raise_oserror(_path: Any) -> Any:
+        raise OSError("竞态：链接刚被属主删除")
+
+    # 兜底路径：lstat 失败不得抛给扫描层，按非 junction 交给后续 resolve/stat 兜底
+    monkeypatch.setattr(image_io, "os", _NtOs(_raise_oserror))
+    assert image_io._is_junction(tmp_path / "gone") is False
+
+    # 判定路径：tag 命中为 True（反例：无该属性/ tag 为 0 的普通目录不得误判）
+    mount_point = types.SimpleNamespace(st_reparse_tag=image_io._IO_REPARSE_TAG_MOUNT_POINT)
+    monkeypatch.setattr(image_io, "os", _NtOs(lambda _p: mount_point))
+    assert image_io._is_junction(tmp_path / "jn") is True
+    monkeypatch.setattr(image_io, "os", _NtOs(lambda _p: types.SimpleNamespace()))
+    assert image_io._is_junction(tmp_path / "plain") is False, "普通目录不得判成 junction"
 
 
 def test_iter_images_junction_cycle_terminates(tmp_path: Path) -> None:

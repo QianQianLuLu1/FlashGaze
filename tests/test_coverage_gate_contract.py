@@ -11,8 +11,13 @@
 - ``.github/workflows/ci.yml``：test job 安装 mcp/gui/exif/heic 轻量 extras
   （纳入主门禁的模块才能在主矩阵被真实度量）；extras job 不得有 job 级
   ``continue-on-error``（否则门禁失败被吞掉，回到「只报告不设门」）；
-  覆盖率硬门禁步骤必须存在且无条件执行（不受 sentinel 锁条件化）。
+  覆盖率硬门禁步骤必须存在且无条件执行（不受 sentinel 锁条件化）；
+  test job 必须逐腿产出 junit 并上传（否则产物只有 coverage.xml，腿挂了
+  也查不出是失败/报错/未跑）；extras 投递给 Codecov 的 flag 名必须与
+  ``codecov.yml`` 声明的 flags 逐字对齐（错配会让 carryforward 静默落空）。
 - ``codecov.yml``：patch/core 强制状态不得再排除 mcp_server / webui.app。
+- ``requirements-dev.txt``：coverage 引擎必须钉死单版本（不钉时 12 腿矩阵
+  会因 requires-python 差异解析出两个版本，跨腿覆盖率不再是同一口径）。
 
 改门槛、改 omit、改 CI 门禁结构时，必须同步更新本测试与 README
 「覆盖率门禁」小节、docs/extras-governance.md 的口径。
@@ -21,6 +26,7 @@
 from __future__ import annotations
 
 import configparser
+import json
 import re
 from pathlib import Path
 
@@ -32,6 +38,7 @@ MAIN_RC = REPO_ROOT / ".coveragerc"
 EXTRAS_RC = REPO_ROOT / ".coveragerc-extras"
 CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 CODECOV_YML = REPO_ROOT / "codecov.yml"
+DEV_REQ = REPO_ROOT / "requirements-dev.txt"
 
 # 主门禁数值（单一来源 .coveragerc [report] fail_under；本次修复不改变它）。
 MAIN_FAIL_UNDER = 80
@@ -100,6 +107,21 @@ def _job_section(ci_text: str, job_key: str, next_job_key: str) -> str:
     end = next(i for i, ln in enumerate(lines) if ln.rstrip() == next_job_key)
     assert start < end, f"ci.yml 片段定位失败：{job_key} .. {next_job_key}"
     return "\n".join(lines[start:end])
+
+
+def _declared_codecov_flags(codecov_text: str) -> set[str]:
+    """取 codecov.yml 顶层 flags: 块下声明的 flag 名（2 空格缩进的键）。"""
+    lines = codecov_text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if ln.rstrip() == "flags:"), None)
+    assert start is not None, "codecov.yml 没有顶层 flags: 声明块"
+    declared: set[str] = set()
+    for ln in lines[start + 1 :]:
+        if ln.strip() and not ln.startswith("  "):
+            break  # 出块（下一个顶层键）
+        match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", ln)
+        if match is not None:
+            declared.add(match.group(1))
+    return declared
 
 
 # ── .coveragerc（主门禁）──────────────────────────────────────────────
@@ -180,6 +202,28 @@ def test_ci_test_job_installs_required_extras() -> None:
     )
 
 
+def test_ci_test_job_uploads_junit_per_leg() -> None:
+    """test job 必须逐腿产出并上传 junit，且把本腿结果写进 job summary。
+
+    coverage-* 产物只含 coverage.xml，因此「这条腿挂在哪一行」可查、但「为什么挂」
+    不可查：2026-10-23 的 12 腿产物里 macos-py3.10 / windows-py3.10 有 6 行分支
+    未覆盖，无法区分用例失败、fixture 报错还是根本没跑。反例护栏：junit 缺失/损坏
+    时摘要步骤只发 notice 并以 0 退出——真正的门禁是 pytest 退出码，不让诊断步骤
+    反过来制造第二条红。
+    """
+    test_job = _job_section(_read_text(CI_YML), "  test:", "  typecheck:")
+    assert "--junitxml=junit.xml" in test_job, (
+        "test job 的 pytest 步骤缺少 --junitxml：腿挂了也拿不到失败清单，只能靠猜"
+    )
+    assert "name: junit-${{ matrix.os }}-py${{ matrix.python-version }}" in test_job, (
+        "junit 必须逐腿独立成产物（勿塞进 coverage-* 产物：那会破坏"
+        "「coverage 产物只含 coverage.xml」这一跨腿比对前提）"
+    )
+    assert "- name: Summarize leg test outcome" in test_job, (
+        "缺少逐腿结果摘要步骤：12 条腿的失败点不会出现在 job summary 上"
+    )
+
+
 def test_ci_extras_job_has_no_job_level_continue_on_error() -> None:
     """extras job 不得有 job 级 continue-on-error（会吞掉门禁失败 = 零门禁）。
 
@@ -253,6 +297,70 @@ def test_codecov_core_patch_no_longer_excludes_mcp_and_app() -> None:
         assert still_excluded in codecov, (
             f"codecov.yml 丢失既有排除项 {still_excluded}（依赖缺失模块保留在 core 之外）"
         )
+
+
+# ── Codecov flag 对齐（ci.yml 投递名 ↔ codecov.yml 声明名）─────────────
+
+
+def test_ci_extras_job_posts_declared_codecov_flags() -> None:
+    """extras job 投递的 flag 名必须逐字命中 codecov.yml 声明的 flags。
+
+    回归实证：写 ``flags: extras-${{ matrix.os }}`` 时实际投递
+    ``extras-ubuntu-latest`` / ``extras-macos-latest``，而声明的是
+    ``extras-ubuntu`` / ``extras-macos``——两组名字永不相交，声明里的
+    carryforward/informational 全部落空，可选模块滚动覆盖率从未真聚合。
+    双向反例都拦：新增 extras 腿未登记 → unmapped；改成未声明的 flag 名 → unknown。
+    """
+    extras_job = _job_section(_read_text(CI_YML), "  extras:", "  e2e:")
+    match = re.search(r"flags:\s*\$\{\{\s*fromJSON\('(\{.*?\})'\)\[matrix\.os\]\s*\}\}", extras_job)
+    assert match is not None, (
+        "extras job 的 Codecov flags 必须写成 fromJSON 查表形式（拼接 matrix.os 会产出"
+        "与 codecov.yml 声明不一致的 flag 名，见本用例说明）"
+    )
+    posted = json.loads(match.group(1))
+    declared = _declared_codecov_flags(_read_text(CODECOV_YML))
+
+    unknown = set(posted.values()) - declared
+    assert not unknown, (
+        f"extras job 投递了未声明的 flag {sorted(unknown)}；"
+        "codecov.yml 的 flags: 声明（含 carryforward/informational）对其无效"
+    )
+    matrix_os = re.search(r"^ {8}os:\s*\[([^\]]*)\]", extras_job, re.MULTILINE)
+    assert matrix_os is not None, "extras job 的 strategy.matrix.os 定位失败"
+    legs = {x.strip().strip("'\"") for x in matrix_os.group(1).split(",") if x.strip()}
+    unmapped = legs - set(posted)
+    assert not unmapped, (
+        f"extras 矩阵新增腿 {sorted(unmapped)} 未在 Codecov flag 查表里登记，"
+        "该腿会投递空 flag；新增 extras 腿必须同步补 flags 查表项"
+    )
+
+
+# ── requirements-dev.txt（测量引擎口径）───────────────────────────────
+
+
+def test_coverage_engine_is_pinned_to_single_version() -> None:
+    """coverage 必须钉死单版本，避免 12 腿矩阵解析出两个测量引擎。
+
+    回归实证：coverage 7.17.0（2026-10-22）起 requires-python >=3.11，未钉版时
+    2026-10-23 那轮 12 份 coverage.xml 的 version 属性分裂成 7.16.2（py3.10 腿）
+    与 7.17.0（其余腿），跨腿覆盖率不再同口径——差异无法区分「代码变了」还是
+    「引擎变了」。反例：写成区间（>=…/<…）同样判红，因为 resolver 仍可能按
+    requires-python 分腿选到不同版本。
+    """
+    entries = [
+        ln.strip()
+        for ln in _read_text(DEV_REQ).splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    specs = [e for e in entries if re.match(r"^coverage(\[[^\]]*\])?[=<>!~]", e)]
+    assert len(specs) == 1, (
+        f"requirements-dev.txt 必须且只能有一条 coverage 声明，实际 {specs}；"
+        "不钉版时 pytest-cov 的 coverage 由 resolver 按各腿 requires-python 选择"
+    )
+    assert "==" in specs[0], (
+        f"coverage 必须钉死单版本（实际 {specs[0]}）；"
+        "解除此约束的前提见该文件注释与 docs/agent-context/pitfalls.md"
+    )
 
 
 if __name__ == "__main__":

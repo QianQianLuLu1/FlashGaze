@@ -39,6 +39,7 @@
 ## 3. 趋势监控与可视化（不阻塞合并）
 
 1. **Codecov 独立 flag（informational）**：`extras-ubuntu` / `extras-macos` 两个 flag 在 `codecov.yml` 中设 `informational: true` + `carryforward: true`，仅用于看板趋势，不参与 PR 合并判定。`status.patch.core` 对核心代码强制（informational:false，target 80%），可选模块 patch 保持 informational。
+   - **flag 名对齐（2026-10-23 修复）**：`ci.yml` 曾写 `flags: extras-${{ matrix.os }}`，实际投递 `extras-ubuntu-latest` / `extras-macos-latest`——与上面两个声明名永不相交，`carryforward`/`informational` 对声明 flag 全程落空，可选模块的滚动覆盖率从未真正聚合，而 CI 侧完全无感。现改为 `fromJSON` 查表（`{"ubuntu-latest":"extras-ubuntu","macos-latest":"extras-macos"}[matrix.os]`），并由 `tests/test_coverage_gate_contract.py::test_ci_extras_job_codecov_flags_match_declared_flags` 双向钉住：投递名未声明 → 红；extras 矩阵新增腿未登记 → 红。教训与 §2 R 系列同源——「配置写了但没人校验」等于没写。
 2. **gh-pages 长期趋势图**：`extras-health.yml` 的 `charts` job 复用 `benchmark.yml` 的 `rhysd/github-action-benchmark` 模式，把每模块覆盖率写入 `gh-pages/dev/extras-health/`，渲染折线图（与 `dev/bench/` 同处一处，统一运维心智）。访问路径：`https://<org>.github.io/<repo>/dev/extras-health/`。
 3. **每周 Issue 摘要**：每周一（cron `9 9 * * 1`）`weekly-report` job 把关键指标（各模块覆盖率、趋势箭头、失败用例）评论到固定 tracking Issue（环境变量 `EXTRAS_HEALTH_ISSUE`）。
 

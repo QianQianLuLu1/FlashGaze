@@ -160,6 +160,60 @@ def test_chmod_failure_still_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert not list(tmp_path.glob(".*.tmp.*"))
 
 
+def test_preserve_mode_chmod_failure_still_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M-1 的 preserve_mode 分支：继承权限的 chmod 失败同样只降级、不阻断落盘。
+
+    上方用例传了显式 mode=，结构上只能走 `if mode is not None` 分支；覆盖已存在
+    目标却继承失败（`elif preserve_mode and p.exists()`）是另一条 best-effort
+    路径——受限文件系统/奇异 st_mode 下会真实抛 OSError，此前无测试覆盖。
+    """
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("chmod not permitted")
+
+    target = tmp_path / "img.jpg"
+    target.write_bytes(b"old")
+    os.chmod(target, 0o600)  # chmod 必须在打桩前完成
+
+    monkeypatch.setattr(os, "chmod", _boom)
+    atomic_write_bytes(target, b"new content")  # 不传 mode：走 preserve_mode 继承分支
+
+    assert target.read_bytes() == b"new content"
+    assert not list(tmp_path.glob(".*.tmp.*"))
+
+
+@pytest.mark.skipif(not _IS_POSIX, reason="os.chown 仅 POSIX 存在")
+def test_chown_failure_still_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """属主继承（os.chown）失败为 best-effort：权限位已继承即达成目的，不得阻断落盘。
+
+    平台记账（勿误读为「测试没跑=没修好」）：本用例在 Windows 4 条 CI 腿上
+    必定 SKIPPED，因为生产代码的 `hasattr(os, "chown")` 守卫在 nt 上恒为 False——
+    atomic_write.py 的 chown 体属「POSIX 可达 / Windows 永久不可达」，按 pitfalls
+    口径记账而不加 pragma 掩盖（pragma 会连带屏蔽 8 条 POSIX 腿上的真实执行）。
+
+    skipif 还有第二个理由，别顺手摘掉它：Windows 的 chmod 只控制只读位，
+    `stat` 取不回完整 octal（实测 chown 失败后 0o600 目标回读为 0o666），
+    下面的权限等值断言在本模块仅 POSIX 执行——与 test_bytes_preserves_existing_mode
+    同一条约定。
+    """
+
+    def _boom(*args: object, **kwargs: object) -> None:
+        raise OSError("chown not permitted")
+
+    target = tmp_path / "img.jpg"
+    target.write_bytes(b"old")
+    os.chmod(target, 0o600)
+
+    monkeypatch.setattr(os, "chown", _boom)
+    atomic_write_bytes(target, b"new content")
+
+    assert target.read_bytes() == b"new content"
+    assert _mode_of(target) == 0o600, "chown 失败不应牵连已成功的权限继承"
+    assert not list(tmp_path.glob(".*.tmp.*"))
+
+
 # ---------- M-10：cleanup_stale_tmp 新鲜 tmp 宽限 ----------
 
 
