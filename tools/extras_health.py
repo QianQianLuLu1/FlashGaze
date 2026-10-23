@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """FlashGaze 可选模块健康度判定脚本（纯标准库，无第三方依赖）。
 
 输入：
@@ -21,6 +20,10 @@
   R5 恢复 recovered：所有模块 >= RECOVER_LINE(70%) 且连续 2 快照无失败测试
 
 纯逻辑（parse_* / evaluate / load_history / render_*）与 I/O 分离，便于本地单测。
+
+勿加 shebang：本文件在版本库里是 mode 644（不可执行），加上 `#!/usr/bin/env python3` 会让
+Linux 腿的 `ruff check` 报 EXE001，而 Windows 无 exec 位语义、本地怎么跑都测不出来。调用方
+一律是 `python tools/extras_health.py …`（见 .github/workflows/extras-health.yml）。
 """
 
 from __future__ import annotations

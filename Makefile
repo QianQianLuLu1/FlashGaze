@@ -1,7 +1,7 @@
 # FlashGaze 本地代码质量守护（Makefile）
 #
 # 提供与 CI lint / typecheck job 等价的本地一键命令，全部复用 pyproject.toml
-# 中的 [tool.ruff] / [tool.mypy] 规则与 requirements-dev.txt 的版本区间。
+# 中的 [tool.ruff] / [tool.mypy] 规则与 requirements-dev.txt 钉定的工具版本。
 #
 # 常用目标：
 #   make install       安装 dev 依赖并启用 pre-commit 钩子
@@ -9,8 +9,10 @@
 #   make format        自动格式化（python -m ruff format .）
 #   make format-check  检查格式化是否合规（python -m ruff format --check .）
 #   make typecheck     运行 mypy（python -m mypy）
-#   make check         完整本地守护：lint + format-check + typecheck
-#   make verify        一键完整验证：check + test（lint + format-check + typecheck + test）
+#   make typecheck-posix 以 Linux 视角运行 mypy（python -m mypy --platform linux，
+#                      复现 CI typecheck job；Windows 开发机上 win32-only 的类型错误只有它能暴露）
+#   make check         完整本地守护：lint + format-check + typecheck + typecheck-posix
+#   make verify        一键完整验证：check + test
 #   make test          运行测试（python -m pytest tests/ -q；默认口径自动排除 e2e，见 pyproject addopts）
 #   make test-all      全量测试（-o addopts= 解除默认过滤，含 e2e；无 e2e 依赖时自动跳过）
 #   make hooks         对所有文件运行 pre-commit（等价于 CI 全量预检）
@@ -21,7 +23,7 @@
 # dist 目标会自行安装 build/twine：发布工具与开发工具链分离，
 # 故不写入 requirements-dev.txt。
 
-.PHONY: install lint format format-check typecheck test test-all check verify hooks dist
+.PHONY: install lint format format-check typecheck typecheck-posix test test-all check verify hooks dist
 
 install:
 	pip install -r requirements-dev.txt
@@ -39,7 +41,13 @@ format-check:
 typecheck:
 	python -m mypy
 
-check: lint format-check typecheck
+# CI 的 typecheck job 跑在 ubuntu，typeshed 按 mypy 运行平台解析 stdlib 分支；
+# Windows 开发机上 `python -m mypy` 会走 win32 分支，Linux-only 的类型错误
+# （如 _winapi 属性）本地恒绿、CI 恒红。用 --platform linux 在任意机器上复现那一面。
+typecheck-posix:
+	python -m mypy --platform linux
+
+check: lint format-check typecheck typecheck-posix
 
 verify: check test
 

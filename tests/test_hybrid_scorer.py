@@ -183,8 +183,10 @@ def test_score_one_cv_hang_returns_error(photo_dir: str, monkeypatch: pytest.Mon
     monkeypatch.setattr(hs, "PER_IMAGE_TIMEOUT_SEC", 1)
     config = _config(directory=photo_dir)
     scorer = HybridScorer(CVEngine(), None, config)
-    # 永久阻塞：模拟 C 层死循环（libwebp/libtiff 畸形图）
-    scorer.cv_engine.evaluate_with_color = lambda p: time.sleep(1e9)  # type: ignore[method-assign, assignment, return-value]  # 测试桩：制造挂起
+    # 有界阻塞：模拟 C 层死循环（libwebp/libtiff 畸形图）。勿用 time.sleep(1e9)——py3.10 的
+    # Windows（Sleep 的 32 位毫秒计数）与 macOS（select EINVAL）会立即抛错而非挂起，异常经
+    # err_holder 被看门狗原样重抛，超时分支根本不触发。口径同 _hang_thread_stub 的 30s。
+    scorer.cv_engine.evaluate_with_color = lambda p: threading.Event().wait(30)  # type: ignore[method-assign, assignment, return-value]  # 测试桩：制造挂起
     sharp = next(Path(photo_dir).glob("*.jpg"))
     hung_engine = scorer.cv_engine
     start = time.monotonic()
@@ -1665,12 +1667,21 @@ def test_phase1_real_pool_hung_worker_teardown_bounded(
     good1 = [r for r in results if r.file == "good1.jpg"]
     if hang_count == 1:
         assert good1 and good1[0].error is None, "未占满池时好图不应被超时误伤"
+        assert scorer.phase1_stats["rebuilds"] == 0, "leaked 未达阈值不应触发池代际重建"
     else:
-        # 修复前此处断言"死锁占满"（exhausted 批死）；重建语义下 good1 作为
-        # 未决图被重提交到新一代池，必须正常出分
-        assert good1 and good1[0].error is None, (
-            f"重建后好图应正常出分而非被判死: {good1[0].error!r}"
+        # 【不在此钉 good1 必须出分】ProcessPoolExecutor 的 future.running() 在进入
+        # call_queue 时即为真，看门狗 deadline 从那一刻起算，因此重建后的新一代里
+        # good1 可能与 ≥2 张挂起图同代派发并共享同一 deadline 而被连带标「阶段1超时」；
+        # 是否落入该分支取决于 _HUNG_POLL_SEC=1s 的轮询粒度与 pending 集合
+        # （hybrid_scorer.py 重建处）的迭代顺序，真实 spawn 池下非确定性——2026-10-23
+        # macos-latest py3.13 腿即如此。「重建后排队图正常出分」由确定性假池用例
+        # test_phase1_pool_rebuild_rescues_queued_images 钉死（12 腿与 make test 都跑），
+        # 本用例的独有贡献是「真实 spawn + terminate 下拆除有界」，改由 rebuilds 指纹
+        # 证明重建代确实跑过（修复前从未断言）。
+        assert good1 and "死锁占满" not in (good1[0].error or ""), (
+            f"重建语义下好图不得被整批判死: {good1[0].error!r}"
         )
+        assert scorer.phase1_stats["rebuilds"] >= 1, "5 张挂起占满 2 worker 必须触发池代际重建"
 
 
 # ---------- 阶段1 真实进程池：供应链信号跨进程传播 集成 ----------

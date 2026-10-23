@@ -17,7 +17,9 @@
   ``codecov.yml`` 声明的 flags 逐字对齐（错配会让 carryforward 静默落空）。
 - ``codecov.yml``：patch/core 强制状态不得再排除 mcp_server / webui.app。
 - ``requirements-dev.txt``：coverage 引擎必须钉死单版本（不钉时 12 腿矩阵
-  会因 requires-python 差异解析出两个版本，跨腿覆盖率不再是同一口径）。
+  会因 requires-python 差异解析出两个版本，跨腿覆盖率不再是同一口径）；
+  ruff / mypy / types-requests 同样钉死单版本（区间式会让 CI 与开发机各取
+  一版，静态 job 变红时无法排除版本因素）。
 
 改门槛、改 omit、改 CI 门禁结构时，必须同步更新本测试与 README
 「覆盖率门禁」小节、docs/extras-governance.md 的口径。
@@ -361,6 +363,33 @@ def test_coverage_engine_is_pinned_to_single_version() -> None:
         f"coverage 必须钉死单版本（实际 {specs[0]}）；"
         "解除此约束的前提见该文件注释与 docs/agent-context/pitfalls.md"
     )
+
+
+def test_static_analysis_tools_are_pinned_to_single_version() -> None:
+    """ruff / mypy / types-requests 必须钉死单版本，让静态 job 的红灯可归因。
+
+    回归实证：2026-10-23 CI 的 lint job 装 ruff 0.16.10、开发机装 0.16.4，两个静态
+    job 同时红而本地全绿。事后查明根因是平台盲区而非版本（EXE001 要看文件 exec 位，
+    NTFS 无该语义、本地 `ruff check --select EXE001` 恒不报；mypy 按运行平台解析
+    typeshed 的 win32 分支，`_winapi.CreateJunction` 只在 Linux 视角报错），但区间式
+    约束让「先怀疑版本」成了无法排除的第一步——钉版把这条归因成本一并消掉。
+    反例：任一条改回区间（>=…/<…）即判红，resolver 仍会在 CI 与本地各选一版。
+    """
+    entries = [
+        ln.strip()
+        for ln in _read_text(DEV_REQ).splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    for pkg in ("ruff", "mypy", "types-requests"):
+        specs = [e for e in entries if re.match(rf"^{re.escape(pkg)}[=<>!~]", e)]
+        assert len(specs) == 1, (
+            f"requirements-dev.txt 必须且只能有一条 {pkg} 声明，实际 {specs}；"
+            "不钉版时 CI 与开发机会由 resolver 各选一版，静态 job 红灯无法归因"
+        )
+        assert "==" in specs[0], (
+            f"{pkg} 必须钉死单版本（实际 {specs[0]}）；"
+            "升级走 dependabot 评审后改钉新单版本，解除前提见该文件注释与 pitfalls §3.8"
+        )
 
 
 if __name__ == "__main__":

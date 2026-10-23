@@ -115,9 +115,16 @@ def test_preserves_owner(tmp_path: Path) -> None:
 # ---------- M-1：只读目标 + chmod best-effort ----------
 
 
+@pytest.mark.skipif(
+    _IS_POSIX, reason="POSIX 上 replace/unlink 由父目录写位决定，不抛 PermissionError"
+)
 def test_readonly_target_rejected_leaves_no_tmp(tmp_path: Path) -> None:
     """Windows：目标只读（0o444）时 os.replace 抛 PermissionError；finally 清理
-    不得因 tmp 只读而二次抛错掩盖原始异常，且目录无 .tmp 残留（M-1）。"""
+    不得因 tmp 只读而二次抛错掩盖原始异常，且目录无 .tmp 残留（M-1）。
+
+    POSIX 腿整条 skip：那里 replace 由父目录写位决定、直接成功，语义与本用例相反，
+    同档场景由下方 test_readonly_target_posix_replaced_in_place 反向覆盖。
+    """
     target = tmp_path / "locked.jpg"
     target.write_bytes(b"original")
     os.chmod(target, 0o444)

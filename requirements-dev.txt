@@ -13,14 +13,21 @@ coverage[toml]==7.16.2
 # 回归阈值与本地运行命令见 docs/bench/README.md）
 pytest-benchmark>=4.0,<6
 # 静态类型检查（配置见 pyproject.toml [tool.mypy]；CI 由 typecheck job 执行）
-# 解锁 PEP 695（详见 docs/PEP695_COMPAT.md）后若需新版本特性，再放宽 <2 上界；
-# 放宽前须确认 mypy 已在目标 python_version 下支持 PEP 695 解析（路线 A）或已升最低 Python 至 3.12+（路线 B）。
-mypy>=1.11,<2
+# 钉死单版本（与 coverage[toml] 同口径）：区间式让 CI 与开发机由 resolver 各选一版，
+# 「本地 0 错误 / CI 红」时无从排除版本因素。取 2026-10-23 CI typecheck job 实跑版本。
+# 解除条件：需要 mypy 新版特性时改为新的单版本；<2 上界承载的 PEP 695 解锁口径
+# （路线 A/B，详见 docs/PEP695_COMPAT.md）不因钉版而改变。
+mypy==1.20.2
 # requests 官方包不带 py.typed，装 stubs 才能对 vlm_client 的 HTTP 调用做类型检查
-types-requests>=2.31,<3
+# 钉死单版本：types-requests 按日期滚动发版（2.33.0.20260712 → 2.33.0.20261006），
+# 上游签名一变，无人改一行代码也能把 typecheck job 打红——它同属「检查引擎」的一部分。
+types-requests==2.33.0.20261006
 # lint 与格式化（配置见 pyproject.toml [tool.ruff]；CI 由 lint job 执行）
-# 钉死 minor：ruff 0.x 的 minor 版本会扩充默认规则集，升级须经评审
-ruff>=0.16,<0.17
+# 钉死单版本（原 >=0.16,<0.17）：区间式下 CI 与本地可能各取一版（本轮 CI=0.16.10、
+# 本地=0.16.4），排查时无法排除版本因素。取 2026-10-23 CI lint job 实跑版本。
+# 诚实标注：本轮 lint 失败与版本无关——EXE001 依赖文件 exec 位，Windows/NTFS 无该语义，
+# 本地 `ruff check --select EXE001` 恒不报，只有 Linux 腿能判（见 pitfalls §3.8）。
+ruff==0.16.10
 # 本地提交钩子（仓库根 .pre-commit-config.yaml；make hooks 全量预检）
 # 复用上方 ruff/mypy 的版本区间，保证本地与 CI 同源
 pre-commit>=3.5,<5

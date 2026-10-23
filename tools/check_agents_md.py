@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """FlashGaze AGENTS.md 完整性检查脚本（纯标准库，无第三方依赖）。
 
 用途：
@@ -30,6 +29,9 @@
 CI 等价步骤：
   - name: Check AGENTS.md integrity
     run: python -m tools.check_agents_md
+
+勿加 shebang：本文件在版本库里是 mode 644（不可执行），一旦加上 `#!/usr/bin/env python3`，
+Linux 腿的 `ruff check` 就报 EXE001；Windows 无 exec 位语义，本地怎么跑都测不出来。
 """
 
 from __future__ import annotations

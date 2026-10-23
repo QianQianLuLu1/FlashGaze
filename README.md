@@ -607,7 +607,7 @@ The default run carries a baked-in filter (`pyproject.toml` `[tool.pytest.ini_op
 
 **Dated snapshot — 2026-10-17, Windows / Python 3.12.10, extras `mcp,gui,exif,xlsx` installed:** `python -m pytest tests/ --collect-only -q` reports `1058/1096 tests collected (38 deselected)`, and `python -m pytest tests/ -q` reports `1030 passed / 28 skipped / 38 deselected`. The 38 deselected are the **two** module-level `e2e` suites — the Playwright Web GUI tests (`tests/e2e/test_webui_e2e.py`) **and** the CLI end-to-end tests (`tests/test_cli_e2e.py`); each carries a module-level `pytestmark`, so the default filter drops both together. These totals move with the installed extras (a module whose dependency is absent skips during collection), so read them as a snapshot rather than a contract; the durable invariant is the default filter itself (and the fact that what it drops is exactly those two module-level `e2e` suites), whereas `38 deselected` is just this snapshot's count and will move as e2e cases are added or removed. Coverage spans the CV engine, VLM client, hybrid scorer, exporter, CLI parser, end-to-end flows, reproducibility, config layers, and the three-layer Web GUI below.
 
-Coverage gate: total coverage must stay ≥ 80% (configured in `.coveragerc`, enforced by the same `pytest --cov` run locally and in CI). `mcp_server`, `webui/app`, and `exif_writer` are inside the gate — the main CI matrix installs the lightweight `mcp,gui,exif,heic` extras so their tests run there (without them the gate measures skipped tests: 79.31% in practice). The three dependency-heavy optional modules (`xlsx_exporter`, `deduplicator`, `portrait_engine`) are excluded from the main gate and enforced by the CI `extras` job instead (`.coveragerc-extras`: unconditional hard floor of 50% overall plus per-module floors in `ci.yml`; see `docs/extras-governance.md`). Each of the 12 matrix legs uploads two artifacts — `coverage-<os>-py<ver>` (only `coverage.xml`, so cross-leg diffs stay comparable) and `junit-<os>-py<ver>` — and writes its own pass/fail/error line to the job summary; a leg that breaks is diagnosable without guessing. `coverage` itself is pinned to a single version in `requirements-dev.txt`: coverage 7.17.0 dropped Python 3.10, so an unpinned matrix resolves two different measurement engines in one run and the per-leg numbers stop being comparable (see `docs/agent-context/pitfalls.md` §3.7).
+Coverage gate: total coverage must stay ≥ 80% (configured in `.coveragerc`, enforced by the same `pytest --cov` run locally and in CI). `mcp_server`, `webui/app`, and `exif_writer` are inside the gate — the main CI matrix installs the lightweight `mcp,gui,exif,heic` extras so their tests run there (without them the gate measures skipped tests: 79.31% in practice). The three dependency-heavy optional modules (`xlsx_exporter`, `deduplicator`, `portrait_engine`) are excluded from the main gate and enforced by the CI `extras` job instead (`.coveragerc-extras`: unconditional hard floor of 50% overall plus per-module floors in `ci.yml`; see `docs/extras-governance.md`). Each of the 12 matrix legs uploads two artifacts — `coverage-<os>-py<ver>` (only `coverage.xml`, so cross-leg diffs stay comparable) and `junit-<os>-py<ver>` — and writes its own pass/fail/error line to the job summary; a leg that breaks is diagnosable without guessing. `coverage` itself is pinned to a single version in `requirements-dev.txt`: coverage 7.17.0 dropped Python 3.10, so an unpinned matrix resolves two different measurement engines in one run and the per-leg numbers stop being comparable (see `docs/agent-context/pitfalls.md` §3.7). The static-analysis toolchain is pinned the same way (`ruff==0.16.10` / `mypy==1.20.2` / `types-requests==2.33.0.20261006`) so a red `lint` / `typecheck` job is attributable. Note that both jobs run on ubuntu, and two classes of failure are invisible from a Windows dev box by construction — `EXE001` needs a file exec bit that NTFS does not have, and mypy resolves typeshed's `sys.platform` branches for the machine it runs on — so `make typecheck-posix` supplies the other view locally (see §3.8).
 
 ### Web GUI test layers
 
@@ -679,12 +679,15 @@ Today ruff and mypy run **only in CI**, so non-compliant code can still be commi
 
 - **Makefile** (one-click manual checks, also useful for CI-local parity):
   ```bash
-  make check        # lint + format-check + typecheck (full local guard)
+  make check        # lint + format-check + typecheck + typecheck-posix (full local guard)
   make verify       # check + test (never runs `format`, which rewrites files)
   make lint         # python -m ruff check .
   make format       # python -m ruff format .
   make format-check # python -m ruff format --check .
   make typecheck    # python -m mypy
+  make typecheck-posix # python -m mypy --platform linux — mirrors the CI typecheck job.
+                      # mypy resolves typeshed's `sys.platform` branches for the machine it
+                      # runs on, so win32-only type errors are invisible on the other view.
   make test         # python -m pytest tests/ -q (built-in default: e2e excluded)
   make test-all     # python -m pytest tests/ -q -o addopts= (full suite incl. e2e)
   make hooks        # pre-commit run --all-files
@@ -1310,7 +1313,7 @@ pytest tests/ -v --cov=flashgaze --cov-report=term-missing
 
 **带日期的实测快照 —— 2026-10-17，Windows / Python 3.12.10，已装 extras `mcp,gui,exif,xlsx`：** `python -m pytest tests/ --collect-only -q` 报 `1058/1096 tests collected (38 deselected)`；`python -m pytest tests/ -q` 报 `1030 通过 / 28 跳过 / 38 取消选择`。被取消选择的 38 项来自**两个**模块级 `e2e` 套件——Playwright Web GUI 用例（`tests/e2e/test_webui_e2e.py`）**与** CLI 端到端用例（`tests/test_cli_e2e.py`）；两者都以模块级 `pytestmark` 声明，故被默认过滤一并排除。总数随已装 extras 变动（依赖缺失的模块在收集阶段即跳过），因此把它当快照读，别当契约；长期成立的不变量只有默认过滤本身（以及「它排除的恰好是上述两个模块级 `e2e` 套件」这一事实），`38 deselected` 只是本次快照的读数，随 e2e 用例增减而变。覆盖 CV 引擎、VLM 客户端、混合评分器、导出器、CLI 解析器、端到端流程、可复现性、配置层，以及下述 Web GUI 三层覆盖。
 
-覆盖率门禁：总覆盖率须 ≥ 80%（配置在 `.coveragerc`，本地与 CI 的同一条 `pytest --cov` 命令都会强制执行）。`mcp_server`、`webui/app` 与 `exif_writer` 已纳入门槛——CI 主矩阵加装 `mcp,gui,exif,heic` 轻量 extras 使其测试在主矩阵真实执行（缺依赖时对应测试跳过、门禁失真，实测仅装 `mcp` 时总覆盖率 79.31% 不达标）。三个重依赖可选模块（`xlsx_exporter`、`deduplicator`、`portrait_engine`）不纳入主门槛，由 CI 的 `extras` job 硬门槛强制（`.coveragerc-extras`：无条件总下限 50% + `ci.yml` 逐模块下限；见 `docs/extras-governance.md`）。12 条矩阵腿各自上传两个产物——`coverage-<os>-py<ver>`（只含 `coverage.xml`，保持跨腿可比对）与 `junit-<os>-py<ver>`——并把本腿的通过/失败/错误写进 job summary，某条腿挂了可直接定位到用例，不必靠覆盖率缺失去猜。`coverage` 本身在 `requirements-dev.txt` 里钉死单版本：7.17.0 起放弃 Python 3.10，不钉版时同一次矩阵会解析出两个测量引擎，跨腿覆盖率不再同口径（见 `docs/agent-context/pitfalls.md` §3.7）。
+覆盖率门禁：总覆盖率须 ≥ 80%（配置在 `.coveragerc`，本地与 CI 的同一条 `pytest --cov` 命令都会强制执行）。`mcp_server`、`webui/app` 与 `exif_writer` 已纳入门槛——CI 主矩阵加装 `mcp,gui,exif,heic` 轻量 extras 使其测试在主矩阵真实执行（缺依赖时对应测试跳过、门禁失真，实测仅装 `mcp` 时总覆盖率 79.31% 不达标）。三个重依赖可选模块（`xlsx_exporter`、`deduplicator`、`portrait_engine`）不纳入主门槛，由 CI 的 `extras` job 硬门槛强制（`.coveragerc-extras`：无条件总下限 50% + `ci.yml` 逐模块下限；见 `docs/extras-governance.md`）。12 条矩阵腿各自上传两个产物——`coverage-<os>-py<ver>`（只含 `coverage.xml`，保持跨腿可比对）与 `junit-<os>-py<ver>`——并把本腿的通过/失败/错误写进 job summary，某条腿挂了可直接定位到用例，不必靠覆盖率缺失去猜。`coverage` 本身在 `requirements-dev.txt` 里钉死单版本：7.17.0 起放弃 Python 3.10，不钉版时同一次矩阵会解析出两个测量引擎，跨腿覆盖率不再同口径（见 `docs/agent-context/pitfalls.md` §3.7）。静态检查工具链同口径钉死（`ruff==0.16.10` / `mypy==1.20.2` / `types-requests==2.33.0.20261006`），让 `lint` / `typecheck` 变红时可归因；但这两个 job 跑在 ubuntu，`EXE001`（要看文件 exec 位，NTFS 无该语义）与 mypy 的 typeshed 平台分支在 Windows 开发机上天生看不见，本地须用 `make typecheck-posix` 补上另一视角（见 §3.8）。
 
 ### Web GUI 测试分层
 
@@ -1382,12 +1385,14 @@ python -m ruff check .
 
 - **Makefile**（一键手动检查，也便于本地复刻 CI）：
   ```bash
-  make check        # lint + format-check + typecheck（完整本地守护）
+  make check        # lint + format-check + typecheck + typecheck-posix（完整本地守护）
   make verify       # check + test（不含会改写文件的 format）
   make lint         # python -m ruff check .
   make format       # python -m ruff format .
   make format-check # python -m ruff format --check .
   make typecheck    # python -m mypy
+  make typecheck-posix # python -m mypy --platform linux（复现 CI typecheck job 的 Linux 视角：
+                      # mypy 按运行所在机器解析 typeshed 的 sys.platform 分支，换平台才看得见另一面）
   make test         # python -m pytest tests/ -q（内置默认口径，自动排除 e2e）
   make test-all     # python -m pytest tests/ -q -o addopts=（全量，含 e2e）
   make hooks        # pre-commit run --all-files

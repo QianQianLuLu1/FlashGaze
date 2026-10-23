@@ -86,7 +86,10 @@ def _parse_weights(raw: Any) -> dict[str, float] | None:
     for v in weights.values():
         if not math.isfinite(v) or v < 0:
             return None
-    total = sum(weights.values())
+    # fsum 而非 sum：CPython 3.12 起内置 sum() 改用 Neumaier 补偿求和，3.10/3.11 仍是朴素
+    # 左折叠；两次归一化叠加后同一份 --weights 在不同解释器上末位不相等（0.4 → 0.3999…97）。
+    # fsum 逐版本精确一致。_adjust_custom_weights 的兜底归一化必须同步改，只改一处更糟。
+    total = math.fsum(weights.values())
     if total <= 0:
         return None
     return {k: v / total for k, v in weights.items()}
@@ -619,8 +622,8 @@ def _adjust_custom_weights(config: Config) -> Config:
         for dim in missing:
             W[dim] = _BORROW_TABLE[dim]
 
-    # 兜底归一化：消除浮点误差并吸收被忽略维度的权重（sum 恒为 1.0）
-    total = sum(W.values())
+    # 兜底归一化：消除浮点误差并吸收被忽略维度的权重（fsum 恒为 1.0，跨版本理由见 _parse_weights）
+    total = math.fsum(W.values())
     if total <= 0:
         # 不应发生（sharpness/exposure 必填且合计 > 0），极端兜底回默认分支
         # 文案与 _validate_weights 的响亮失败保持一致，便于用户按同一提示排查

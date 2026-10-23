@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -397,6 +398,9 @@ def test_build_config_coerces_string_workers_from_file(
     """配置文件 workers 写成字符串 \"4\" 时强转为 int，不抛 TypeError（C-05）。"""
     from flashgaze.utils.config import build_config, load_config_file
 
+    # 钉住核数：workers 会被钳制到 min(cpu_count, 16)，macos-latest runner 报 3 核时
+    # 4→3，本用例就变成在验机器核数而非数值强转（同 tests/test_cli_parser.py:93-94）
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
     cfg_file = tmp_path / "cfg.json"
     cfg_file.write_text(json.dumps({"workers": "4"}), encoding="utf-8")
     cfg = build_config(".", file_cfg=load_config_file(cfg_file))
@@ -427,6 +431,8 @@ def test_build_config_invalid_workers_falls_back_to_default(
     """配置文件 workers 非法（非数字）时回退默认 int，不崩溃（C-05）。"""
     from flashgaze.utils.config import build_config, load_config_file
 
+    # 同上：不钉核数时 3 核 runner 上 DEFAULT_WORKERS=4 被钳成 3，掩盖真正要验的回退语义
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
     cfg_file = tmp_path / "bad.json"
     cfg_file.write_text(json.dumps({"workers": "abc"}), encoding="utf-8")
     cfg = build_config(".", file_cfg=load_config_file(cfg_file))
@@ -438,6 +444,8 @@ def test_build_config_override_float_workers_coerced(monkeypatch: pytest.MonkeyP
     """override 传浮点 4.0 也强转为 int（C-05）。"""
     from flashgaze.utils.config import build_config
 
+    # 同上：钉住核数，避免少核 runner 把 4.0→4 再钳制成 3
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
     cfg = build_config(".", workers=4.0)
     assert cfg.workers == 4
     assert isinstance(cfg.workers, int)
@@ -689,7 +697,7 @@ def test_build_config_selection_bounds_cover_file_and_env(
 
 
 def test_build_config_file_with_1e999_falls_back_to_defaults(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#3-6 回归：JSON 允许 1e999（解析为 inf），int(inf) 抛 OverflowError，
     不在 (TypeError, ValueError) 捕获范围内，曾击穿「不抛异常」的装配契约。"""
@@ -703,6 +711,8 @@ def test_build_config_file_with_1e999_falls_back_to_defaults(
     )
     from flashgaze.utils.config import build_config
 
+    # 同上：钉住核数，否则 3 核 runner 上回退得到的 4 又被钳成 3，看不出 OverflowError 是否收敛
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
     # 刻意写原始 JSON 文本而非 json.dumps：后者会把 inf 序列化成非法的 Infinity 字面量
     cfg_file = tmp_path / "cfg.json"
     cfg_file.write_text(
@@ -720,7 +730,7 @@ def test_build_config_file_with_1e999_falls_back_to_defaults(
     assert any("非法" in r.message for r in caplog.records)
 
 
-def test_build_config_numeric_overrides_survive_infinity() -> None:
+def test_build_config_numeric_overrides_survive_infinity(monkeypatch: pytest.MonkeyPatch) -> None:
     """#3-6 回归：override 直接传 float('inf') 逐字段回退默认，不抛 OverflowError。"""
     from flashgaze.defaults import (
         DEFAULT_MAX_RETRIES,
@@ -730,6 +740,8 @@ def test_build_config_numeric_overrides_survive_infinity() -> None:
     )
     from flashgaze.utils.config import build_config
 
+    # 同上：钉住核数，与上一条用例保持同一口径
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
     cfg = build_config(
         ".",
         top=float("inf"),

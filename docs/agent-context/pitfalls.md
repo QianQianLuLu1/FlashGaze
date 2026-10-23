@@ -66,3 +66,78 @@
   Windows 上伪造 `os.chown` 存在**（假的跨平台绿灯，还会掩盖有人删掉 `hasattr` 守卫
   的回归）。口径：能跑的平台跑、跑不了的用 `skipif` 明写并留文档，Windows 腿总覆盖率
   与 POSIX 腿相差约 ±0.1pp 属真实平台差异，不是缺陷。
+
+## 3.8 静态门禁的 Linux/Windows 语义盲区
+
+- **事实**：CI 的 `lint` / `typecheck` job 跑在 ubuntu，而开发机常在 Windows。有两类问题
+  **本地恒绿、CI 恒红**，且与工具版本无关（2026-10-23 run 39909374394 两个 job 各栽一种）：
+  1. **ruff `EXE001`**（shebang present but file is not executable）：判据是文件 exec 位，
+     NTFS 无该语义，本地 `python -m ruff check --select EXE001 tools/` 实测恒不报。
+     口径：`tools/*.py` **一律不加 shebang**——调用方全是 `python -m tools.check_agents_md`
+     （`ci.yml` / `.pre-commit-config.yaml`）或 `python tools/extras_health.py …`
+     （`extras-health.yml`），仓库 0 个 `100755` 跟踪文件，shebang 是一句做不到的承诺。
+  2. **mypy 按运行平台解析 typeshed 的 `sys.platform` 分支**，而 `os.name` 守卫**不做**死分支
+     分析：`tests/test_image_io.py` 的 `_winapi.CreateJunction` 在 win32 视角存在、Linux 视角
+     报 `attr-defined`。本地复现口径：`python -m mypy --platform linux`（已固化为
+     `make typecheck-posix` 并并入 `make check`）。
+- **禁止的取巧**：给这类行加 `# type: ignore[attr-defined]`——win32 视角下它不是错误，
+  `strict` 自带的 `warn_unused_ignores` 会反过来把本地 `python -m mypy` 打红；改用
+  `getattr(mod, "Name", None)` + 显式 `pytest.skip`。也不要用 `if sys.platform == "win32"`
+  包裹——Linux 视角判死分支后 `warn_unreachable` 报 unreachable 新错。
+- **工具版本口径**：`ruff==0.16.10` / `mypy==1.20.2` / `types-requests==2.33.0.20261006`
+  钉死单版本（同 §3.7 的 coverage 逻辑）。`types-requests` 按日期滚动发版，上游签名一变
+  就能在无人改一行代码时把 `typecheck` 打红。**诚实标注**：钉版消除的是「先怀疑版本」的
+  归因成本，它拦不住本节两类平台盲区。
+- **契约测试**：`tests/test_coverage_gate_contract.py::test_static_analysis_tools_are_pinned_to_single_version`
+- **反方向未覆盖**：CI（ubuntu）不跑 `mypy --platform win32` 视角，Windows-only 的类型错误
+  仍只靠开发机默认 `python -m mypy` 发现。本轮未加该步骤，因为无法在 Windows 之外实测它会
+  带出多少既有报错——加进去等于用一次新的红灯换对称性，需单独排期。
+
+## 3.9 测试桩的跨平台/跨版本原语选择
+
+四条口径，全部由 2026-10-23 那轮 10/12 腿变红的用例反推出来：
+
+1. **模拟挂起勿用 `time.sleep(1e9)`**：CPython 3.10 上 Windows（`Sleep` 的 32 位毫秒计数）与
+   macOS（`select` EINVAL）会**立即抛错而非挂起**，异常经 `err_holder` 被看门狗原样重抛，
+   要测的超时分支根本不触发。替代口径按存活位置分：被放弃的**看门线程**用
+   `threading.Event().wait(30)`（`_hang_thread_stub`），**子进程**用 `wait(120)`。
+2. **断言 workers 必须钉核数**：`utils/config.py` 把 workers 钳到 `min(cpu_count, 16)`，
+   macos-latest runner 报 3 核 → `DEFAULT_WORKERS=4` 被钳成 3。用例一律
+   `monkeypatch.setattr(os, "cpu_count", lambda: 16)`（`tests/test_cli_parser.py:93-94` 起即此口径）。
+   **唯一例外**：`tests/test_mcp_server.py:88-94` 故意按真实核数验证钳制，它是 `config.py`
+   钳制分支的唯一覆盖来源——给它加 pin 等于删掉那段覆盖。
+3. **只读目标（0o444）语义分平台**：Windows 上 `os.replace` 抛 `PermissionError`，POSIX 由
+   父目录写位决定、直接成功。同一场景的两种期望必须互为反向 `skipif`
+   （`tests/test_atomic_write.py` 的 `test_readonly_target_rejected_leaves_no_tmp` /
+   `test_readonly_target_posix_replaced_in_place`）。
+4. **PTY 合流 stdout+stderr**：`--verbose` 下 CLI 的「完成: N 张图」INFO 会跟在 JSON 报告
+   之后进同一条流，从首个 `\n{` 起 `json.loads` 整段尾部必报 `Extra data`。必须用
+   `json.JSONDecoder().raw_decode` 只取第一个完整文档，并断言其结构（否则伪锚点会静默
+   返回错文档）。见 `tests/test_cli_terminal_e2e.py::_extract_json`。
+
+另附**跨解释器数值口径**：权重归一化用 `math.fsum` 而非 `sum`（CPython 3.12 起 `sum()` 改用
+Neumaier 补偿求和，3.10/3.11 仍是朴素左折叠；叠加两次归一化后同一份 `--weights` 的 `sharpness`
+在 3.11 上是 `0.39999999999999997`、3.12+ 上是 `0.4`）。`_parse_weights` 与
+`_adjust_custom_weights` **两处必须同改**，只改前一处 3.10 上会得到更偏的 `0.4000000000000001`。
+`hybrid_scorer.py` 的加权求和**故意不动**：同类非确定性，但出口 `round(final, 2)` 不可观测，
+动它要把已钉死的分数基线重测一遍。
+
+## 3.10 阶段1看门狗会把「排队未开工的好图」连带判死（已知未修）
+
+- **事实**：`ProcessPoolExecutor` 的 `future.running()` 在**进入 call_queue 时**即为真
+  （`concurrent/futures/process.py` 的 `add_call_item_to_queue`），而看门狗在首次观察到
+  `f.running()` 时才起算 deadline（`core/hybrid_scorer.py` 单图超时处）。该处注释写的
+  「排队等待不计入」与实现不符：池容量 `max_workers + 1` 的队列槽位同样算「已在执行」。
+- **后果**：重建后的新一代里，排队好图可能与 ≥2 张挂起图**同代派发、共享同一 deadline**，
+  被连带标 `阶段1超时(>Ns)`；一旦标记就从 `pending` 中 `discard`，而下代只重提交
+  `unresolved = [futures[f] for f in pending]`，因此**救不回来**。
+- **命中条件**：非确定性——取决于 `_HUNG_POLL_SEC=1.0` 的轮询粒度（挂起图的 deadline 是否
+  被拆到两个 tick）与 `pending` 集合的迭代顺序。2026-10-23 仅 macos-latest py3.13 腿命中
+  （该腿实测耗时 48.9s ≈ 3 代 × 15s，说明跑满了 `_POOL_REBUILD_LIMIT`）。
+- **当前处置**：`test_phase1_real_pool_hung_worker_teardown_bounded[5]` 不再断言「排队好图
+  必须出分」，改断「不得被整批判死」+ `phase1_stats["rebuilds"] >= 1` 指纹；该强断言由
+  确定性假池用例 `test_phase1_pool_rebuild_rescues_queued_images` 钉住（12 腿都跑）。
+- **未修原因**：正解要在重建时重提交本代挂起图，破坏「`pending` 严格收缩」的终止性论证，
+  并改变 `test_phase1_pool_rebuild_limit_bounds_all_hang_batch` 语义；属能力变更，需单独
+  排期与兼容性评估。**勿用「把 `PER_IMAGE_TIMEOUT_SEC` 调大」当作修复**——那是同代共享
+  deadline 的结构问题，翻倍阈值不改变结构，只让 12 条腿一起付墙钟。

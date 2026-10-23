@@ -41,6 +41,9 @@
 | 3.5 | mypy strict 全量 | 禁止新增 `# type: ignore` |
 | 3.6 | pytest 默认口径 | 裸跑不含 e2e/benchmarks |
 | 3.7 | coverage 引擎钉版 | 不钉时 12 腿矩阵分裂两个引擎（7.17.0 起 requires-python ≥3.11）；平台不可达行用 skipif 明写，不加 pragma |
+| 3.8 | 静态门禁的平台盲区 | lint/typecheck 跑 ubuntu：`EXE001` 在 NTFS 恒不可见（`tools/*.py` 勿加 shebang）；mypy 按运行平台解析 typeshed，须 `--platform linux` 才看得见 CI 那一面。ruff/mypy/types-requests 已钉死单版本 |
+| 3.9 | 测试桩的原语选择 | 挂起用 `Event().wait(30/120)` 而非 `sleep(1e9)`（py3.10 Win/macOS 立即抛错）；验 workers 必钉 `os.cpu_count`；只读目标语义分平台、须互为反向 skipif；PTY 合流须 `raw_decode`；权重归一化用 `math.fsum` |
+| 3.10 | 排队好图被连带判死 | `future.running()` 进 call_queue 即为真 → 看门狗 deadline 从入队起算；真实池下非确定性。产品缺口已知未修，强断言由确定性假池用例钉住 |
 
 > 完整细节 → [docs/agent-context/pitfalls.md](docs/agent-context/pitfalls.md)
 
@@ -56,6 +59,7 @@
 | 4.4 | M-17 | pytest 默认口径校验 | 默认口径必须用 CI 守卫 |
 | 4.5 | H-10/11/12 | MCP 高危审查 | MCP 安全护栏必须比 CLI 更严格 |
 | 4.6 | 产物复核 | 12 腿覆盖率产物 | 只在 1/12 腿命中的行是测试稳定性信号而非噪声；产物只含 coverage.xml 时「腿为什么红」不可诊断 |
+| 4.7 | 跨平台收口 | 8 类 CI 红灯 | 本地绿≠CI 绿：静态 job 跑 ubuntu，须 `mypy --platform linux` 自检；测试桩的原语选择本身就是跨平台契约；请求自带的前提（「版本漂移」）要在证据到位后复核并公开订正 |
 
 > 完整细节 → [docs/agent-context/fixes.md](docs/agent-context/fixes.md)
 
@@ -68,8 +72,9 @@ make install       # pip install -r requirements-dev.txt + pre-commit install（
 make lint          # python -m ruff check .
 make format        # python -m ruff format .（会改写文件）
 make format-check  # python -m ruff format --check .（CI 口径，不改写）
-make typecheck     # python -m mypy（strict，范围见 [tool.mypy] files）
-make check         # lint + format-check + typecheck
+make typecheck     # python -m mypy（strict，范围见 [tool.mypy] files；按当前机器平台解析 typeshed）
+make typecheck-posix # python -m mypy --platform linux（复现 CI typecheck job 的 Linux 视角，见 §3.8）
+make check         # lint + format-check + typecheck + typecheck-posix
 make test          # python -m pytest tests/ -q（继承默认过滤，不含 e2e）
 make test-all      # python -m pytest tests/ -q -o addopts=（清空默认过滤）
 make verify        # check + test（不跑会改写文件的 format）
@@ -78,6 +83,9 @@ make dist          # pip install build twine → python -m build → twine check
 ```
 
 > 安装可编辑包与 extras 需自行执行 `pip install -e ".[mcp,gui,exif,heic]"`（`make install` 只装开发工具链）。
+>
+> **覆盖率不在 `make test`/`make verify` 里**：二者不带 `--cov`，`fail_under=80` 只在 CI 生效。
+> 本地要收口须显式跑 `python -m pytest tests/ -q --cov=flashgaze --cov-report=term-missing`。
 
 ---
 
@@ -155,9 +163,22 @@ docs/agent-context/         # 作用域文档（architecture / pitfalls / fixes 
    - 新增 CI job / 修改门禁 → 更新本文件 §7
    - 修改发布流程 → 更新 `docs/agent-context/release.md` + 本文件 §8 摘要
 5. **入库要求（易踩）**：`docs/agent-context/` 四篇作用域文档与 `tools/check_agents_md.py` **必须纳入版本跟踪**。作用域文档存在性检查是阻塞项，但只看磁盘：文件留在工作区时本地必绿，CI 在全新 checkout 上必红。提交前用 `git ls-files docs/agent-context tools/check_agents_md.py` 复核（应为 5 条）。
+   - **反向情形**：`.qoder/rules/` 与 `.qoder/` 下其余内容被 `.gitignore` 忽略（`git ls-files .qoder` 为空），是**只对本机 Agent 生效的规则目录**。在其中写的口径同步**不会进入 `main`、CI 与其他开发者都看不到**——需要跨会话/跨人一致的约束必须写进本文件或 `docs/agent-context/`，不能只落在 `.qoder/`。
 
 ---
 
-**最后更新**：2026-10-23（复核 12 腿覆盖率产物：无门禁失败，但定位到四类真实问题并修复——新增假池 `_FakeProc` + `__procs__` 使「terminate 未生效→升级 kill」由 1/12 腿计时偶然变为确定性覆盖；补 `atomic_write` 两处 OSError 兜底与 `image_io._is_junction` lstat 竞态用例（后者此前 12/12 腿未覆盖）；test job 逐腿产出 junit 与失败摘要（`coverage-*` 产物保持只含 coverage.xml）；extras 投递 Codecov 的 flag 名与 `codecov.yml` 声明对齐；`coverage[toml]` 钉死 7.16.2 消除 12 腿双引擎。§3.7 / §4.6 / §7 `test` 行与 `tests/test_coverage_gate_contract.py`（8→11 条）同步）
+**最后更新**：2026-10-23（收口 run 39909374394 的 8 类 CI 红灯：两个静态 job（`ruff` 的 `EXE001` × 2、`mypy` 的 `_winapi.CreateJunction`——根因是 ubuntu 门禁 / Windows 开发机的**平台盲区**，**不是**最初判断的版本漂移；该前提已在拿到日志后证伪并公开订正）+ `test` 12 腿红 10 条的六类跨平台/跨版本用例问题（macOS 3 核把 workers 钳到 3、py3.10 上 `time.sleep(1e9)` 立即抛错而非挂起、POSIX 只读目标不挡 `os.replace`、PTY 合流使 JSON 尾部多出 INFO 行、真实池排队好图被同代 deadline 连带判死、3.10/3.11 权重末位与 3.12+ 不等）。新增 §3.8/§3.9/§3.10 与 §4.7；`tools/*.py` 去掉 shebang；`requirements-dev.txt` 钉死 `ruff==0.16.10`/`mypy==1.20.2`/`types-requests==2.33.0.20261006`；`Makefile` 增 `typecheck-posix` 并并入 `make check`；`tests/test_coverage_gate_contract.py` 由 11 条增至 12 条；§5 补「覆盖率门禁不在 `make test`/`make verify` 里」的口径提示。逐类取证与未本地验证项见 `docs/agent-context/fixes.md` §4.7）
 
-**上次更新**：2026-10-23（§4.3 M-05 核心教训订正为「专属日志标签 + 顺序敏感 except 分支，退出码仍 `IMAGE_ERROR(4)`」，原述「必须用专属退出码」与代码及 `tests/test_cli_main.py` 四处断言不符；`docs/plans/` 11 份已完成的一次性修复计划归档移出仓库，覆盖率逐模块下限的取值溯源改由 `docs/extras-governance.md` §2.1 承载；`CHANGELOG.md` 的 PEP 695 解锁门槛与 `pyproject.toml` 注释一并对齐为 3.12+）
+**复核补充**：2026-10-23 对上述未提交改动做独立复验（工具链先对齐到钉版 `ruff 0.16.10`/`mypy 1.20.2`/
+`types-requests 2.33.0.20261006`/`coverage 7.16.2`）。本地可证四类取得**修复前失效 + 修复后通过**双向证据：
+在 `e837d50` 的 detached worktree 上逐字复现 `mypy --platform linux` 的 `CreateJunction` 报错（97:9，78 files）、
+以 `os.cpu_count=lambda:3` 复现 5 条 `assert 3 == 4`、以同一合成 PTY 缓冲复现旧 `_extract_json` 的
+`Extra data`、以真实 py3.11 复现权重 `0.39999999999999997`（并实测「只改一处归一化」得 `0.4000000000000001`
+更偏）。反例：把 `_POOL_REBUILD_LIMIT` 归零后 `[5]` 用例判红且日志给出「重建代数(0)已耗尽」；
+`_extract_json` 喂结构合法但非报告的 JSON 触发 `"summary" in data` 断言。本地全绿基线：`ruff check`/
+`format --check`/两面 mypy/`tools.check_agents_md`/`1038 passed, 29 skipped, 38 deselected`。
+**仍属 CI 终验**：ubuntu 的 `EXE001`（NTFS 无 exec 位语义，已实测同版 ruff 在本地带 shebang 也恒不报）、
+POSIX 只读语义、真实 PTY（本机整类 skip）、py3.10 的 `Sleep`/`select`（本机无 3.10 解释器）、
+macos-latest 真实核数与真实 spawn 池代际拆分。另订正 §9.5：`.qoder/` 不入库，其口径同步不可达 CI。
+
+**上次更新**：2026-10-23（复核 12 腿覆盖率产物：无门禁失败，但定位到四类真实问题并修复——新增假池 `_FakeProc` + `__procs__` 使「terminate 未生效→升级 kill」由 1/12 腿计时偶然变为确定性覆盖；补 `atomic_write` 两处 OSError 兜底与 `image_io._is_junction` lstat 竞态用例（后者此前 12/12 腿未覆盖）；test job 逐腿产出 junit 与失败摘要（`coverage-*` 产物保持只含 coverage.xml）；extras 投递 Codecov 的 flag 名与 `codecov.yml` 声明对齐；`coverage[toml]` 钉死 7.16.2 消除 12 腿双引擎。§3.7 / §4.6 / §7 `test` 行与 `tests/test_coverage_gate_contract.py`（8→11 条）同步）

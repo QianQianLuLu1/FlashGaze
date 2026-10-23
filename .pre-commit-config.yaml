@@ -9,9 +9,13 @@
 #   - python -m tools.check_agents_md（AGENTS.md 存在性 + 必要章节检查）
 #
 # 采用 repo: local，直接复用开发者已安装 requirements-dev.txt 的虚拟环境
-# （ruff>=0.16,<0.17 / mypy>=1.11,<2 / types-requests>=2.31,<3），因此规则与
-# 版本完全来自 pyproject.toml 的 [tool.ruff] / [tool.mypy]，无需在此重复声明，
+# （ruff==0.16.10 / mypy==1.20.2 / types-requests==2.33.0.20261006，均钉死单版本），
+# 因此规则与版本完全来自 pyproject.toml 的 [tool.ruff] / [tool.mypy]，无需在此重复声明，
 # 也不会出现与 CI 的版本漂移。
+#
+# 注意：本处 mypy 只覆盖「当前机器平台」那一面。Windows 开发机上 win32 之外的类型错误
+# 看不见，需另跑 `make typecheck-posix`（= python -m mypy --platform linux）；未挂成 hook
+# 是为了不让每次提交多付一遍 mypy 时长，收口由 CI 的 typecheck job（ubuntu）负责。
 #
 # 安装（在仓库根，即 pyproject.toml 所在目录执行）：
 #   pip install -r requirements-dev.txt

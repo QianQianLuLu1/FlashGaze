@@ -194,10 +194,16 @@ def _spawn_pty(pexpect: Any, args: list[str], timeout: int = 60) -> tuple[Any, i
 
 
 def _extract_json(full: str) -> Any:
-    """从 PTY 合流输出中提取末尾的 JSON 报告（进度条/日志行不含行首 '{'）。"""
+    """从 PTY 合流输出中提取 JSON 报告（进度条/日志行不含行首 '{'）。
+
+    --verbose 时 entry.py 的「完成: …」INFO 会跟在 JSON 之后（PTY 把 stdout 与 stderr
+    合成同一条流），故用 raw_decode 只取第一个完整 JSON 文档，尾部日志不参与解析。
+    """
     idx = full.find("\n{")
     assert idx != -1, f"PTY 输出中未找到 JSON 数据块，末尾输出:\n{full[-500:]}"
-    return json.loads(full[idx + 1 :])
+    data, _end = json.JSONDecoder().raw_decode(full[idx + 1 :])
+    assert isinstance(data, dict) and "summary" in data, f"提取到的不是评分报告 JSON: {data!r}"
+    return data
 
 
 @pytest.mark.skipif(_IS_WINDOWS, reason="pexpect 需要 POSIX pty 模块")

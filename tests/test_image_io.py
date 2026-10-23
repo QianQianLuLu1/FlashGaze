@@ -94,7 +94,13 @@ def _make_junction(target: Path, link: Path) -> None:
     try:
         import _winapi
 
-        _winapi.CreateJunction(str(target), str(link))
+        # getattr 而非直接取属性：typeshed 把 CreateJunction 放在 win32 分支里，
+        # mypy --platform linux 下解析不到该属性会报 attr-defined，而 os.name 守卫
+        # 不做死分支分析、两平台都解析；此处探测一次，缺属性就如实 skip。
+        create_junction = getattr(_winapi, "CreateJunction", None)
+        if create_junction is None:
+            pytest.skip("当前解释器的 _winapi 未提供 CreateJunction，未验证")
+        create_junction(str(target), str(link))
     except (OSError, NotImplementedError, ImportError):
         pytest.skip("当前环境无法创建 junction，未验证")
 

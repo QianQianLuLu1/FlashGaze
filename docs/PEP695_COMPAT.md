@@ -44,7 +44,7 @@ requires-python = ">=3.10"            # pyproject [project]
 |---|---|---|
 | mypy PEP 695 支持总议题 | [python/mypy#15238](https://github.com/python/mypy/issues/15238) | 是否声明支持 `python_version < 3.12` 目标下的 PEP 695 解析；是否合入相关 PR |
 | mypy 发布说明 | [mypy changelog](https://mypy.readthedocs.io/en/stable/changelog.html) | 出现 "PEP 695" + "older Python versions" / "backport parsing" 类条目 |
-| mypy 版本区间 | `requirements-dev.txt` `mypy>=1.11,<2` | 解锁后是否需放宽上界以接纳新特性版本 |
+| mypy 钉定版本 | `requirements-dev.txt` `mypy==1.20.2`（原 `>=1.11,<2` 区间；`<2` 上界承载的解锁语义已并入钉版注释） | 解锁后改钉接纳 PEP 695 解析的新单版本，钉版本身不改变解锁条件 |
 | numpy stubs PEP 695 使用 | `numpy` 2.3（`requires-python` 跃迁）与 2.5+（stubs 语法）发布说明 | 2.3 起是否恢复 py3.10 支持；stubs 是否回退/隔离 PEP 695 语法，或 mypy 已能兼容 |
 | 项目 Python 下限决策 | `pyproject.toml` `requires-python` | 是否将下限提升至 `>=3.12` |
 

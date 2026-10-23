@@ -220,7 +220,8 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-# ruff 0.16 起默认规则集扩到 413 条，跟随默认、不显式 select；minor 升级
-# 可能引入新规则使 CI 变红，属预期——经 dependabot 月度 PR 评审后处理。
+# ruff 0.16 起默认规则集扩到 413 条，跟随默认、不显式 select。工具版本已在
+# requirements-dev.txt 钉死单版本，新规则只在钉版被 bump（dependabot 月度 PR 评审）时进入，
+# 不会再出现「CI 与本地各取一版」的漂移归因成本。
 # RUF001-003 对中文注释/文档字符串/字符串全量误报，关闭。
 ignore = ["RUF001", "RUF002", "RUF003"]
