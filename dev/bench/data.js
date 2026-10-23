@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792735541921,
+  "lastUpdate": 1792772671730,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -156,6 +156,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000014737018050872181",
             "extra": "mean: 674.2414000029839 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "9659ad5da4d6f11500c35cb525a963e0c3dde96e",
+          "message": "chore(gitignore): 忽略工作区 IDE 生成的 package-lock.json 空壳",
+          "timestamp": "2026-10-24T00:21:01+08:00",
+          "tree_id": "5fa713a7b7dfa17a138a83f5e345bb3a597002ff",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/9659ad5da4d6f11500c35cb525a963e0c3dde96e"
+        },
+        "date": 1792772671438,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 12.959885422171475,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005339838129764602",
+            "extra": "mean: 77.16117599999943 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.86103600335438,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002254016119114661",
+            "extra": "mean: 72.1446795000027 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 218.12534949486178,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002436141762959186",
+            "extra": "mean: 4.584519874997639 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2472.4400052557103,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015195079722722973",
+            "extra": "mean: 404.45875243657355 usec\nrounds: 1539"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.73093462917999,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006383863409204515",
+            "extra": "mean: 43.99291170000055 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 46.44000061559205,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00014686314481509623",
+            "extra": "mean: 21.533160782608903 msec\nrounds: 46"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 97.86502471154772,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011348044781321078",
+            "extra": "mean: 10.218155086022307 msec\nrounds: 93"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1585.4853257748657,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014786508467423773",
+            "extra": "mean: 630.721700001402 usec\nrounds: 10"
           }
         ]
       }
