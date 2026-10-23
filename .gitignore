@@ -105,3 +105,6 @@ benchmark-*.json
 # 运行期输出：EXIF 原子备份与撤销日志
 .flashgaze_backup/
 .flashgaze_undo/
+
+# 工作区 IDE 生成的 npm 空壳（本仓库无 package.json，非项目依赖）
+/package-lock.json
