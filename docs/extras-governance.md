@@ -20,6 +20,22 @@
 
 定时治理线通过单一事实 `.github/extras-strict.lock` 解耦：定时任务**写锁**，`ci.yml` 的 `check-strict` job **读锁**，互不耦合、可独立演进；硬门槛防线不依赖锁，`tests/test_coverage_gate_contract.py` 锁定其配置契约防退化。
 
+### 2.1 逐模块下限取值基线（M-12 硬门槛溯源）
+
+`ci.yml` 的 `Coverage gate (hard floors)` 里 `--fail-under=82 / 80 / 95` 三行不是自选数字，规则是 **T_i = int(实测_i) − 5**（下限 55，且 ≤ 实测−2）。基线实测如下：
+
+| 模块 | 2026-09-06 实测行覆盖率 | 冻结下限 | 备注 |
+|---|---|---|---|
+| `flashgaze/mcp_server.py` | 87.71% | **82** | |
+| `flashgaze/webui/app.py` | 85.77% | **80** | |
+| `flashgaze/core/xlsx_exporter.py` | 100% | **95** | |
+| `flashgaze/core/deduplicator.py` | 52.33% | 不设逐模块下限 | 本地缺 `imagededup`，52.33% 只是降级路径口径；由总下限 50 + 夜间 R1/R4 兜底 |
+| `flashgaze/core/portrait_engine.py` | 47.62% | 不设逐模块下限 | 本地缺 `face_recognition`（torch/dlib 过重），同上 |
+
+- **实测环境**：本地 Python 3.12.10，extras 口径全量测试激活（`--cov-config=.coveragerc-extras`，source 为上表 5 个模块）。门禁本身也做过实证：逐模块 `coverage report --fail-under` 全部 EXIT=0，反例 `--fail-under=99` 时 `mcp_server` 与 `webui.app` 均 EXIT=2，证明门槛真实生效而非只报告。
+- **主矩阵安装集后续已扩围**：这批下限冻结于主矩阵只装 `.[mcp]` 之时；2026-09 起 `ci.yml` 的 `test` job 实装 `.[mcp,gui,exif,heic]`（见 §1）。扩围只改变主门禁哪些模块被真实考核，不影响上表逐模块下限的数值。
+- **改阈值的同步义务**：上调/下调任一 floor，必须同时更新 `ci.yml` 的 `--fail-under` 行、`tests/test_coverage_gate_contract.py::PER_MODULE_FLOORS` 与本小节表格——三处不一致时契约测试会失败并指回本小节。
+
 ## 3. 趋势监控与可视化（不阻塞合并）
 
 1. **Codecov 独立 flag（informational）**：`extras-ubuntu` / `extras-macos` 两个 flag 在 `codecov.yml` 中设 `informational: true` + `carryforward: true`，仅用于看板趋势，不参与 PR 合并判定。`status.patch.core` 对核心代码强制（informational:false，target 80%），可选模块 patch 保持 informational。

@@ -248,8 +248,8 @@ jobs:
 
       # 覆盖率硬门禁（无条件执行、阻塞合并；M-12 修复）：第一行为 5 个可选
       # 模块的总下限（fail_under=50 来自 .coveragerc-extras），其余为逐模块
-      # 下限（按 2026-09-06 实测基线 int(rate)-5 冻结，见
-      # docs/plans/覆盖率门禁纳入主门槛与extras硬门槛修复计划.md 实测表），
+      # 下限（按 2026-09-06 实测基线 int(rate)-5 冻结，取值溯源见
+      # docs/extras-governance.md §2.1），
       # 由 tests/test_coverage_gate_contract.py 锁定防退化。
       - name: Coverage gate (hard floors)
         if: always()

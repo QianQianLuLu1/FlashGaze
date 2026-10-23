@@ -44,7 +44,7 @@ dependencies = [
     "Pillow>=10.0.0,<14",
     # 上限收紧到 3.10 支持终点：numpy 2.3 起 requires-python >=3.11；同时避开 2.5+
     # 内置 stubs 的 PEP 695 `type` 语法，与 mypy python_version=3.10 目标冲突（语法级错误）。
-    # 维护约定：解除该上限的前提是 mypy 目标升至 3.11+ 或 numpy stubs 的 PEP 695 问题消除，
+    # 维护约定：解除该上限的前提是 mypy 目标升至 3.12+ 或 numpy stubs 的 PEP 695 问题消除，
     # 且解除前须重跑 CI extras job 验证依赖解析。
     # PEP 695 兼容性跟踪与解锁口径（OR）：详见 docs/PEP695_COMPAT.md。
     "numpy>=1.24.0,<2.3",

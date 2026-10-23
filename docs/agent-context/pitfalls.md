@@ -12,7 +12,7 @@
   ① numpy 2.3 起 `requires-python` 升至 `>=3.11`（官方发布说明：2.3.0 支持 Python 3.11–3.13），与本项目 `requires-python = ">=3.10"` 直接冲突——这是当前 `<2.3` 的**生效约束**；
   ② numpy **2.5+** 内置 stubs 使用 PEP 695 `type` 语法，与 mypy `python_version=3.10` 目标冲突（语法级错误，无法通过 `follow_imports` 绕过）。
 - **解除条件**：mypy 上游支持低版本目标的 PEP 695 向下兼容解析 **OR** 项目最低 Python 升到 **3.12+**。实测 mypy 1.20.2：`--python-version 3.10` 与 `3.11` 均报 `Type statement is only supported in Python 3.12 and greater`，仅 3.12 通过 → **升到 3.11 不足以解除成因 ②**。
-- **权威说明**：`docs/PEP695_COMPAT.md`（SSoT，配置注释只做指针）。注意 `pyproject.toml` 注释现写的「mypy 目标升至 3.11+」偏松，以本节实测为准。
+- **权威说明**：`docs/PEP695_COMPAT.md`（SSoT，配置注释只做指针）。`pyproject.toml` numpy 条目注释已对齐本节的 3.12+ 口径；两处若再次分叉，以 SSoT 为准。
 - **修改前**：必须重跑 CI `extras` job 验证依赖解析
 
 ## 3.2 opencv-python-headless（CI 无 OpenGL）

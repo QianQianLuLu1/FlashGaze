@@ -40,6 +40,31 @@ curl -LO $BASE/brisque_range_live.yml
 
 也可浏览器访问 https://github.com/opencv/opencv_contrib/tree/master/modules/quality/samples 手动保存。
 
+## 完整性校验失败（供应链信号，不降级）
+
+自动下载的每个文件都会与 `flashgaze/core/cv_engine.py` 里钉死的 `_BRISQUE_SHA256` 比对。不符时抛 `BrisqueIntegrityError`，**绝不降级成 `noise: null`、也绝不落盘**：
+
+```
+BRISQUE 模型完整性校验失败，已拒绝落盘：<url>
+  期望 SHA256: <expected>
+  实际 SHA256: <actual>（<n> 字节）
+  可能是上游文件已更新，也可能是响应被篡改。请人工核实来源后再更新 _BRISQUE_SHA256，切勿直接放行。
+```
+
+入口层对它的处置（`_cmd_score` 与 `_cmd_cleanup` 逐字同构）：日志专属标签「模型完整性校验失败」+ 退出码 `IMAGE_ERROR(4)`。`except` 分支**必须排在 `RuntimeError` 之前**——它是 `RuntimeError` 子类，后置会被通用分支抢走、错标成普通「评分失败」（M-05 的原始症状）；两者退出码相同，只能靠日志标签区分，`tests/test_cli_main.py` 四处用例钉死这一顺序。
+
+人工核实步骤（若确系上游更新而非篡改）：
+
+1. 从官方 URL **新鲜下载**该文件，下载与算哈希在**同一台可信机器**上完成。
+2. 算 SHA256 并与报错里的「实际 SHA256」逐字符比对：
+   ```bash
+   sha256sum brisque_model_live.yml brisque_range_live.yml      # Linux
+   shasum -a 256 ...                                            # macOS
+   certutil -hashfile brisque_model_live.yml SHA256             # Windows
+   ```
+3. 一致后，才把新值写进 `flashgaze/core/cv_engine.py::_BRISQUE_SHA256`，并在同处注释更新实测日期与字节数。
+4. **红线**：绝不允许运行时联网获取校验值（校验值与被校验物走同一信道，校验即失效）；绝不允许为了跑通而直接放行或删掉比对。
+
 ## 验证
 
 ```bash

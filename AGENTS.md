@@ -51,7 +51,7 @@
 |---|---|---|---|
 | 4.1 | M-12 | 覆盖率门禁收紧 | `continue-on-error` 会静默放行，用契约测试锁定 |
 | 4.2 | M-11 | 配置文件层三入口一致 | 多入口配置下沉到共享函数 |
-| 4.3 | M-05 | BrisqueIntegrityError | 供应链安全信号必须用专属退出码 |
+| 4.3 | M-05 | BrisqueIntegrityError | 供应链信号靠专属日志标签 + 顺序敏感 except 分支辨识；退出码仍是 `IMAGE_ERROR(4)`，不另设专属码 |
 | 4.4 | M-17 | pytest 默认口径校验 | 默认口径必须用 CI 守卫 |
 | 4.5 | H-10/11/12 | MCP 高危审查 | MCP 安全护栏必须比 CLI 更严格 |
 
@@ -156,4 +156,6 @@ docs/agent-context/         # 作用域文档（architecture / pitfalls / fixes 
 
 ---
 
-**最后更新**：2026-10-17（订正 §5 与 Makefile 不符的五个目标注释、§6 幻影路径 `utils/path_safety`、§7 缺失的 `agents-md-integrity` / `check-strict` / `e2e-webkit` 三行、§2 清理护栏与 §3.1 numpy 上限成因；`docs/agent-context/` 四篇与守卫脚本首次入库）
+**最后更新**：2026-10-23（§4.3 M-05 核心教训订正为「专属日志标签 + 顺序敏感 except 分支，退出码仍 `IMAGE_ERROR(4)`」，原述「必须用专属退出码」与代码及 `tests/test_cli_main.py` 四处断言不符；`docs/plans/` 11 份已完成的一次性修复计划归档移出仓库，覆盖率逐模块下限的取值溯源改由 `docs/extras-governance.md` §2.1 承载；`CHANGELOG.md` 的 PEP 695 解锁门槛与 `pyproject.toml` 注释一并对齐为 3.12+）
+
+**上次更新**：2026-10-17（订正 §5 与 Makefile 不符的五个目标注释、§6 幻影路径 `utils/path_safety`、§7 缺失的 `agents-md-integrity` / `check-strict` / `e2e-webkit` 三行、§2 清理护栏与 §3.1 numpy 上限成因；`docs/agent-context/` 四篇与守卫脚本首次入库）

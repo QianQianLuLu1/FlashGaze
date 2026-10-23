@@ -40,9 +40,9 @@ MAIN_FAIL_UNDER = 80
 EXTRAS_OVERALL_FLOOR = 50
 
 # extras job 逐模块硬下限（按 2026-09-06 本地实测行覆盖率 int(rate)-5 冻结：
-# mcp_server 87.71% / webui.app 85.77% / xlsx_exporter 100%，见
-# docs/plans/覆盖率门禁纳入主门槛与extras硬门槛修复计划.md 实测表；
-# 上调/下调必须同步更新该表与 README / extras-governance.md 口径。
+# mcp_server 87.71% / webui.app 85.77% / xlsx_exporter 100%，取值溯源见
+# docs/extras-governance.md §2.1；
+# 上调/下调必须同步更新该小节与 README / extras-governance.md 口径。
 # deduplicator/portrait_engine 本地缺 imagededup/face_recognition 无法实测，
 # 不设逐模块下限，由总下限与夜间 R1/R4 治理兜底）。
 PER_MODULE_FLOORS: dict[str, int] = {
@@ -231,7 +231,7 @@ def test_ci_extras_job_has_unconditional_hard_floor_gate() -> None:
         expected = f'--include="{module}" --fail-under={floor}'
         assert expected in gate_block, (
             f"硬门禁步骤缺少逐模块下限：{expected}；"
-            "调整阈值需同步更新本测试、docs/plans 实测表与 extras-governance.md"
+            "调整阈值需同步更新本测试与 docs/extras-governance.md §2.1 基线表"
         )
 
 

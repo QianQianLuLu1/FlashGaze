@@ -28,10 +28,10 @@
 - **问题**：`_cmd_score` 的 `except Exception` 只包住 `score_paths`，构造期异常穿透到解释器，进程以裸 traceback 终结并返回 Python 默认码 1（与 PARAM_ERROR 重叠）
 - **修复**：
   - `make_scorer` 与 `score_paths` 合入同一异常收敛块，用相位标志区分
-  - 构造期失败 → `CONFIG_ERROR(6)`，评分期失败 → `IMAGE_ERROR(4)`
-  - 新增 `except BrisqueIntegrityError` 分支（**必须排在 `except Exception` 之前**，它是 RuntimeError 子类）
+  - 构造期失败（非 BRISQUE 成因，如端点被 SSRF 拒绝）→ 记「评分器构造失败」+ `CONFIG_ERROR(6)`；评分期失败 → 记「评分失败」+ `IMAGE_ERROR(4)`
+  - 新增 `except BrisqueIntegrityError` 分支（**必须排在 `except Exception` 与 `except RuntimeError` 之前**，它是 RuntimeError 子类），构造期与评分期**一律**记「模型完整性校验失败」+ `IMAGE_ERROR(4)`——该分支优先于上一条的相位判定，所以哈希不符不会走 `CONFIG_ERROR(6)`
   - `main()` 分发层新增 `except Exception` 最后防线 → `INTERNAL_ERROR(8)`
-- **教训**：供应链安全信号（模型完整性校验失败）必须用专属退出码，不能被通用异常吞掉
+- **教训**：供应链安全信号的辨识度靠**专属日志标签 + 顺序敏感的 except 分支**承载，退出码仍复用 `IMAGE_ERROR(4)`（测试 `tests/test_cli_main.py` 四处钉死：`rc == ExitCode.IMAGE_ERROR` 且日志含「模型完整性校验失败」、不含「评分失败」）。别把它记成「专属退出码」——那会让人误等一个不存在的码，正是要防的错标（普通「评分失败」）在码值上无法区分的表现。
 
 ## 4.4 M-17：裸跑 pytest 默认口径校验
 

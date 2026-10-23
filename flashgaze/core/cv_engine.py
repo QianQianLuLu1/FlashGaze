@@ -85,7 +85,9 @@ _BRISQUE_MAX_BYTES = 10 * 1024 * 1024
 # 同一条信道，校验本身就失去了意义。
 # 当前值：2026-08-11 对随包 flashgaze/models/brisque/ 内文件实测
 # （brisque_model_live.yml 567815 字节、brisque_range_live.yml 1356 字节）。
-# 上游更新导致校验失败时的处理流程见 _plans/PLAN-brisque-download.md §7.1。
+# 上游更新导致校验失败时的处理流程见 flashgaze/models/brisque/README.md
+# 「完整性校验失败（供应链信号，不降级）」一节；退出码与 except 顺序的教训见
+# docs/agent-context/fixes.md §4.3（M-05）。
 _BRISQUE_SHA256 = {
     "brisque_model_live.yml": "4c44c7eec9e5139830c0bb0e4a044c9cd351ba5bbc9e3798beca3243e2782ff4",
     "brisque_range_live.yml": "a18427f4f7ad087524bd0d63389649a3899b51ca6d44a4d5f8d8171f1f914a9c",

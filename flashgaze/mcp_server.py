@@ -241,7 +241,7 @@ def score_images(
         workers: 并发线程数（默认 4）
         vlm_provider: VLM 提供商（qwen / openai / anthropic / ollama，默认 qwen；所有 provider 走内置 pin-IP 直连层，无需 litellm，litellm 仅可选兜底）
         scene: 场景模式（auto / portrait / landscape / still_life，默认 auto 由 VLM 自行判断）
-        no_downscale: 是否禁用降采样（长边缩至 1024），默认 False（启用降采样，与现行为一致）；True 时使用原始分辨率
+        no_downscale: 是否禁用降采样（长边超 `DOWNSCALE_THRESHOLD`=2048 时按比例缩小），默认 False（启用降采样，与现行为一致）；True 时使用原始分辨率
 
     Returns:
         JSON 字符串，包含 summary 和 images 数组。
@@ -332,7 +332,7 @@ def score_single_image(
         dedup_threshold: PHash 汉明距离阈值（默认 8，单图模式仅用于配置一致性）
         vlm_provider: VLM 提供商（qwen / openai / anthropic / ollama，默认 qwen；所有 provider 走内置 pin-IP 直连层，无需 litellm，litellm 仅可选兜底）
         scene: 场景模式（auto / portrait / landscape / still_life，默认 auto 由 VLM 自行判断）
-        no_downscale: 是否禁用降采样（长边缩至 1024），默认 None（不覆盖，回落到 env/default 启用降采样，与现行为一致）；True 时使用原始分辨率
+        no_downscale: 是否禁用降采样（长边超 `DOWNSCALE_THRESHOLD`=2048 时按比例缩小），默认 None（不覆盖，回落到 env/default 启用降采样，与现行为一致）；True 时使用原始分辨率
 
     Returns:
         JSON 字符串，包含该图的 sharpness/exposure/score 等字段。
@@ -595,7 +595,7 @@ def score_uploaded_images(
         workers: 并发线程数（默认 4）
         vlm_provider: VLM 提供商（qwen / openai / anthropic / ollama，默认 qwen；所有 provider 走内置 pin-IP 直连层，无需 litellm，litellm 仅可选兜底）
         scene: 场景模式（auto / portrait / landscape / still_life，默认 auto 由 VLM 自行判断）
-        no_downscale: 是否禁用降采样（长边缩至 1024），默认 False（启用降采样，与现行为一致）；True 时使用原始分辨率
+        no_downscale: 是否禁用降采样（长边超 `DOWNSCALE_THRESHOLD`=2048 时按比例缩小），默认 False（启用降采样，与现行为一致）；True 时使用原始分辨率
 
     Returns:
         JSON 字符串，包含 summary 和 images 数组。
@@ -731,9 +731,10 @@ def cleanup_workspace_images(
             且落在 [0, 100]，任一违反整体拒绝执行（不静默钳制）；实际口径以
             summary.scored_source 透明标注（engine / caller / engine_with_caller_errors）。
         force: 显式确认开关（默认 False）。实际删除（dry_run=False）时若待删比例
-            超过 95% 且图片数不少于 20，护栏会整批拦截、一张不删，全部候选进入
-            blocked_files 且 summary.force_required=True；确认无误后须**同时**传
-            force=True 与已核对的清单指纹 confirm_fingerprint 才会真正删除。
+            超过 95% 且可评分图片数不少于 guard_min_sample（默认 6，
+            `CLEANUP_GUARD_MIN_SAMPLE`，下限钳到 1），护栏会整批拦截、一张不删，
+            全部候选进入 blocked_files 且 summary.force_required=True；确认无误后须
+            **同时**传 force=True 与已核对的清单指纹 confirm_fingerprint 才会真正删除。
         confirm_fingerprint: 待删清单指纹（取自上一次 dry_run 报告的
             summary.fingerprint）。force=True 时必填：缺失或与当前待删清单不符
             → status="blocked"，一张不删。两步确认：先 dry_run 核对、后 force 放行。

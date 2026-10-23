@@ -134,19 +134,26 @@ score_single_image(image_path="C:/photos/img1.jpg", no_vlm=True)
 - **双重路径穿越检查**：解析真实路径后用 `relative_to` 校验，防止 `../` 或符号链接逃逸
 - **默认 dry_run=True**：先试运行确认要删除哪些文件，再设 `dry_run=False`
 - **不 unlink，先进回收站**：`dry_run=False` 把每张同卷改名进 `<workspace>/.flashgaze_deleted/deleted_<UTC>_<pid>/`，并向 `<workspace>/.flashgaze_deleted_<UTC>_<pid>.jsonl` 追加审计记录（原路径 / 回收站路径 / SHA256 / 大小 / 评分）。回收站移动失败**绝不降级为直接 unlink**
-- **95% 批量护栏**：待删数占**可评分图**比例 > 0.95 且评分图 ≥ 6 张时整批拦截、一张不删（损坏图不计入分母，防止其稀释比例绕过拦截）
+- **95% 批量护栏**：待删数占**可评分图**比例 > `CLEANUP_MAX_DELETE_RATIO`(0.95) 且评分图 ≥ `CLEANUP_GUARD_MIN_SAMPLE`(6) 张时整批拦截、一张不删（损坏图不计入分母，防止其稀释比例绕过拦截）
 - **两步确认（force ↔ 指纹强绑定）**：护栏拦截后须传 `force=True` **加上**先前 dry_run 报告 `summary.fingerprint` 的**匹配**值；只给 `force=True` 或指纹过期本身就会被拦
 - **删除前再次校验**：每个文件删除前都重新检查路径边界
 
 ### 使用流程
 
 ```python
+import json
+
+# 五个 MCP 工具都返回 **JSON 字符串**（源码里 `return json.dumps(report, ...)`，
+# 返回类型注解为 `-> str`），不是 dict。直接下标会 TypeError，必须先解析。
+
 # 第一步：试运行，查看将要删除哪些文件，并记下返回的 summary.fingerprint
-report = cleanup_workspace_images(
-    workspace="C:/my-photos",
-    top=30,
-    no_vlm=True,
-    dry_run=True,  # 默认值，只报告不删除
+report = json.loads(
+    cleanup_workspace_images(
+        workspace="C:/my-photos",
+        top=30,
+        no_vlm=True,
+        dry_run=True,  # 默认值，只报告不删除
+    )
 )
 fingerprint = report["summary"]["fingerprint"]
 
@@ -190,6 +197,9 @@ cleanup_workspace_images(
 `cleanup_workspace_images` 接受可选的 `scored` 参数（ImageScore 列表，通常来自先前的 `score_images` 调用），但其分数**默认不被信任**：仅复用损坏标记（error 非 None 的图归入 unevaluated、不重解码），分数一律重算——防止被注入提示词的 Agent 伪造预评分（想保留的打高分、想删的打低分）逐图指定删除集合。
 
 ```python
+# prior_scores 取自先前评分报告的 images 数组——报告是 JSON 字符串，须先解析：
+#   prior_scores = json.loads(score_images(directory="C:/my-photos", no_vlm=True))["images"]
+
 # 默认（安全）：传入 scored 仅复用损坏标记，分数重算
 # → summary.scored_source == "engine_with_caller_errors"
 cleanup_workspace_images(workspace="C:/my-photos", top=30, scored=prior_scores)
@@ -204,7 +214,7 @@ cleanup_workspace_images(workspace="C:/my-photos", top=30, scored=prior_scores, 
 
 ### 返回结构
 
-工具返回标准**六字段** Schema（与其他 MCP 工具一致）；清理类工具 `images` 恒为 `null`，逐项明细在 `details` **里**，不是顶层键：
+工具返回标准**六字段** Schema 的 **JSON 字符串**（须 `json.loads` 后才是 dict，与其他 MCP 工具一致）；清理类工具 `images` 恒为 `null`，逐项明细在 `details` **里**，不是顶层键：
 
 ```json
 {
@@ -271,7 +281,7 @@ cleanup_workspace_images(workspace="C:/my-photos", top=30, scored=prior_scores, 
 - **双重路径穿越检查**：解析真实路径后用 `relative_to` 校验，防止 `../` 或符号链接逃逸
 - **默认 `--dry-run`**：只报告待删文件列表，**绝不默认删除**
 - **`--apply` 不 unlink**：每张同卷改名进 `<目录>/.flashgaze_deleted/deleted_<UTC>_<pid>/`，并落 JSONL 审计清单 `<目录>/.flashgaze_deleted_<UTC>_<pid>.jsonl`；移动失败绝不降级为直接删除。唯一直接删除出口是 `--no-recycle`，且必须配 `--force`
-- **95% 批量护栏**：待删占可评分图 > 0.95 且评分图 ≥ 6 张 → 整批拦截、一张不删、退出码 `1`
+- **95% 批量护栏**：待删占可评分图 > `CLEANUP_MAX_DELETE_RATIO`(0.95) 且评分图 ≥ `CLEANUP_GUARD_MIN_SAMPLE`(6) 张 → 整批拦截、一张不删、退出码 `1`
 - **两步确认**：`--force` 必须与 dry_run 报告 `summary.fingerprint` 的匹配值（`--confirm-fingerprint`）同行；单独 `--force` **在评分开始前**就被拒（退出码 `1`），不白烧 VLM 算力
 - **删除前再次校验**：每个文件删除前都重新 `stat`，拒绝符号链接/设备文件/目录（TOCTOU）
 
@@ -320,9 +330,9 @@ flashgaze cleanup <图片目录路径> --top 30 --no-vlm --json
 | `flashgaze restore <清单>` | 按 cleanup 写出的 JSONL 审计清单整批回滚（位置参数，无 `--json`） |
 | `--dry-run` / `--apply`（cleanup，互斥） | 试运行（默认） vs 实际移除（进回收站，非 unlink） |
 | `--force`（cleanup） | 越过 95% 批量护栏；**必须**与 `--confirm-fingerprint` 同行，单独使用退出码 `1` |
-| `--confirm-fingerprint FP`（cleanup） | dry_run 报告 `summary.fingerprint` 的待删清单指纹；缺失/过期即整批拦截 |
+| `--confirm-fingerprint FP`（cleanup） | 带 `--json` 的 dry_run 报告里 `summary.fingerprint` 的待删清单指纹（人类可读报告只打印 `<指纹>` 占位符）；缺失/过期即整批拦截 |
 | `--no-recycle`（cleanup） | 直接删除、不进回收站（无回滚点），须配 `--force` |
-| `--guard-min-sample N`（cleanup） | 护栏启用所需最少评分图数（默认 6，下限 1）；护栏不可经配置关闭 |
+| `--guard-min-sample N`（评分组共用） | 护栏启用所需最少评分图数（默认 6 = `CLEANUP_GUARD_MIN_SAMPLE`，下限 1）；声明在评分参数组里，故 `score` 也接受该旗，但它只对删除护栏生效；护栏不可经配置关闭 |
 | `--dry-run`（restore） | 只报告将恢复哪些文件，不实际移动 |
 | `--json`（cleanup） | 结构化结果输出到 stdout |
 | `--output PATH`（cleanup） | 报告写入文件（需搭配 --json） |
@@ -404,8 +414,9 @@ flashgaze cleanup <图片目录路径> --top 30 --no-vlm --json
 | `--enable-portrait` | 启用人像专项评分（需 face_recognition） |
 | `cleanup <目录>` | CLI 工作空间清理子命令，默认 `--dry-run`；`--apply` 才移除（进回收站，可回滚） |
 | `--dry-run` / `--apply` | cleanup 专用（互斥）：试运行（默认） vs 实际移除 |
-| `--force` + `--confirm-fingerprint` | cleanup 专用：仅在 95% 护栏拦截时使用，**两者必须同行**（指纹取自 dry_run 报告的 `summary.fingerprint`）；单独 `--force` 退出码 1 |
-| `--no-recycle` / `--guard-min-sample N` | cleanup 专用：跳过回收站直接删除（须配 `--force`） / 护栏最小样本（默认 6） |
+| `--force` + `--confirm-fingerprint` | cleanup 专用：仅在 95% 护栏拦截时使用，**两者必须同行**（指纹取自带 `--json` 的 dry_run 报告 `summary.fingerprint`）；单独 `--force` 退出码 1 |
+| `--no-recycle` | cleanup 专用：跳过回收站直接删除（无回滚点），须配 `--force` |
+| `--guard-min-sample N` | 声明在评分参数组（`score` 亦接受），但只对 cleanup 的 95% 删除护栏生效；默认 6 = `CLEANUP_GUARD_MIN_SAMPLE`，下限 1 |
 | `restore <清单>` | 按 cleanup 写出的 `.flashgaze_deleted_<UTC>_<pid>.jsonl` 整批回滚；支持 `--dry-run` |
 | `--enable-dedup` | 启用 PHash 图片去重（需 imagededup） |
 | `--dedup-threshold N` | PHash 汉明距离阈值（默认 8，越小越严格） |
@@ -418,7 +429,7 @@ flashgaze cleanup <图片目录路径> --top 30 --no-vlm --json
 | `--xlsx` / `--xlsx-output PATH` | 额外生成 `.xlsx` 评分表（需 `.[xlsx]`） |
 | `--output PATH` / `--csv-output PATH` | JSON / CSV 清单写入文件（需分别搭配 `--json` / `--csv`） |
 | `--enable-plugins` / `--plugin-dir PATH` | 启用插件评分阶段 / 追加插件目录（内置功能，无需 extra） |
-| `--no-downscale` | 禁用大图降采样（默认长边超 2048px 时降采样） |
+| `--no-downscale` | 禁用大图降采样（默认长边超 `DOWNSCALE_THRESHOLD`(2048px) 时按比例缩小，仅内存中，不改原文件） |
 
 > 以上为高频选项速查；完整列表见 README 的「CLI 选项」章节。
 
@@ -471,7 +482,7 @@ export FLASHGAZE_CONFIG_FILE=/path/to/config.json
 ### 端点白名单与密钥来源（H-6 / M-26）
 
 - `api_base` 有四条互不校验的来源（环境变量 / JSON 配置文件 / CLI `--api-base` / WebUI 文本框），而 API Key 与全部图片内容都会被 POST 到它指向的主机。`build_config` 按白名单校验端点，**未覆盖时仅打 WARNING、不阻断运行**（警告含主机名、判定原因与处置建议），自托管场景不受影响。
-- `FLASHGAZE_API_BASE_ALLOWLIST`：逗号分隔的主机后缀，用于追加内置官方域名（`dashscope.aliyuncs.com`、`dashscope-intl.aliyuncs.com`、`api.openai.com`、`api.anthropic.com`、`localhost`、`host.docker.internal`）。匹配口径为「主机相等，或以 `.条目` 结尾」，因此 `dashscope.aliyuncs.com.evil.com` **不会**误命中。
+- `FLASHGAZE_API_BASE_ALLOWLIST`：逗号分隔的主机后缀。**一旦提供即整体替换内置官方域名清单，不是追加**（内置清单为 `dashscope.aliyuncs.com`、`dashscope-intl.aliyuncs.com`、`api.openai.com`、`api.anthropic.com`、`localhost`、`host.docker.internal`；值为空或全非法时才回落这六项）。因此只加一个自托管域名而不把仍需覆盖的官方域名一并列出，那六个官方端点会反过来开始告警。匹配口径为「主机相等，或以 `.条目` 结尾」，因此 `dashscope.aliyuncs.com.evil.com` **不会**误命中。
 - `FLASHGAZE_ALLOW_UNTRUSTED_API_BASE=1`：声明当前端点已确认为可信，非白名单端点不再告警（自托管 / 自建网关场景）。
 - 私网/回环主机在 `provider=ollama` 或 `FLASHGAZE_ALLOW_PRIVATE_TARGETS=true` 下免白名单校验（仍走 pin-IP 直连与 SSRF 防护）。
 - Agent 调用 CLI 传密钥时优先用 `--api-key-file PATH`（`-` 表示从 stdin 读取），避免密钥进入进程命令行；它与 `--api-key` 互斥（同时提供时退出码 1）。
