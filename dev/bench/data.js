@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792789786929,
+  "lastUpdate": 1792855918476,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -317,6 +317,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000020966443645823256",
             "extra": "mean: 653.2716999998911 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "dcf8c59a9fb3aefbc58500c326243c076189d431",
+          "message": "fix(ci): 兜住 face_recognition import 期 SystemExit 并修通 extras-health 熔断链路\n\n三处收口（CI run 39986414762 / 40031692874 取证）：\n- portrait_engine 探测守卫 except ImportError -> except (ImportError, SystemExit)；\n  新增 tests/test_portrait_import_guard.py 子进程回归，含 SystemExit(None) 退出码为 0 的陷阱用例\n- extras-health.yml charts 步骤入参 raw-data-file/output-storage 均非该 action 参数，\n  未知入参被静默忽略 -> 改 output-file-path\n- 同文件引号 heredoc 内 open(\"$GITHUB_OUTPUT\") 不展开变量 -> steps.*.outputs 恒空，\n  R4 熔断加锁与建/关 Issue 从未执行 -> 改 os.environ[\"GITHUB_OUTPUT\"]\n- ci.yml 覆盖率门禁加 .coverage 存在且非空前置，把「无数据」与「未达标」在日志里分开；阈值一条未改\n- tests/test_coverage_gate_contract.py 12->14 条（benchmark 入参名、引号 heredoc 内的 $GITHUB_OUTPUT，各带反例）\n- AGENTS.md 新增 §3.11/§4.9，同步 pitfalls/fixes/extras-governance",
+          "timestamp": "2026-10-24T23:28:17+08:00",
+          "tree_id": "0466b991c54f12b6544d0c2bfe265c307021912c",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/dcf8c59a9fb3aefbc58500c326243c076189d431"
+        },
+        "date": 1792855918225,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 11.93720262662542,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008186089157715313",
+            "extra": "mean: 83.77172033333362 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.308323533250203,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0022890231702920615",
+            "extra": "mean: 75.14094450000019 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 217.590695473706,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001403145810301942",
+            "extra": "mean: 4.59578475000022 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2439.090984981355,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017634104371104787",
+            "extra": "mean: 409.9888057302808 usec\nrounds: 1431"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.51964802132466,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006557094516784193",
+            "extra": "mean: 44.405667399999516 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 46.17629298266943,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00025918038463654144",
+            "extra": "mean: 21.656134249999518 msec\nrounds: 44"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 97.10102209581525,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00015914881932534898",
+            "extra": "mean: 10.298552769230806 msec\nrounds: 91"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1554.5912598693676,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000013399268467633802",
+            "extra": "mean: 643.2559000003835 usec\nrounds: 10"
           }
         ]
       }
