@@ -81,11 +81,16 @@ jobs:
             --junit junit.xml \
             --history history.json \
             --out-dir health_out
-          # 把判定结果透传给后续步骤
+          # 把判定结果透传给后续步骤。
+          # 定界符带引号时 bash 不做变量展开，所以 Python 侧必须从 os.environ 取输出文件路径；
+          # 直接写 shell 变量名会打开一个同名的普通文件，进程仍 0 退出而 steps.*.outputs 恒为空
+          #（CI run 40031692874 的 R4 熔断链路即因此从未执行）。
           python - <<'PY'
           import json
+          import os
+
           d = json.load(open("health_out/decision.json"))
-          with open("$GITHUB_OUTPUT", "a") as f:
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
               f.write(f"decision={d['decision']}\n")
               f.write(f"write_lock={str(d['actions']['write_lock']).lower()}\n")
               f.write(f"clear_lock={str(d['actions']['clear_lock']).lower()}\n")
@@ -231,14 +236,16 @@ jobs:
         with:
           name: FlashGaze Extras Coverage
           tool: 'customSmallerIsBetter'   # 仅用于承载自定义 metric；实际为覆盖率（越大越好）
-          output-storage: gh-pages
+          # 入参名必须是 output-file-path：该 action 没有 raw-data-file / output-storage，
+          # 未知入参只被静默忽略，output-file-path 于是回退成仓库目录（run 40031692874 即
+          # 因此失败，趋势图从未落盘）。由 tests/test_coverage_gate_contract.py 钉住。
+          output-file-path: health_out/benchmark.json
           benchmark-data-dir-path: dev/extras-health
           gh-pages-branch: gh-pages
           # 改手动推送（下一步）：action 不支持推送重试，与 benchmark nightly 并发推 gh-pages 会被拒
           auto-push: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
           max-items-in-chart: 200
-          raw-data-file: health_out/benchmark.json
 
       # 手动重试推送：上一步已在本地 gh-pages 分支生成提交；被拒则 fetch + rebase + 退避重试。
       # 两工作流写 gh-pages 的目录不同（dev/bench vs dev/extras-health），rebase 无内容冲突。

@@ -41,6 +41,14 @@ EXTRAS_RC = REPO_ROOT / ".coveragerc-extras"
 CI_YML = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 CODECOV_YML = REPO_ROOT / "codecov.yml"
 DEV_REQ = REPO_ROOT / "requirements-dev.txt"
+WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
+EXTRAS_HEALTH_YML = WORKFLOWS_DIR / "extras-health.yml"
+BENCHMARK_YML = WORKFLOWS_DIR / "benchmark.yml"
+RELEASE_YML = WORKFLOWS_DIR / "release.yml"
+
+# rhysd/github-action-benchmark 没有这两个入参（该 action 唯一的 required 入参是
+# output-file-path）。写了不会报错、只会被静默忽略，所以必须由契约测试钉住。
+BENCHMARK_UNDECLARED_INPUTS: frozenset[str] = frozenset({"raw-data-file", "output-storage"})
 
 # 主门禁数值（单一来源 .coveragerc [report] fail_under；本次修复不改变它）。
 MAIN_FAIL_UNDER = 80
@@ -390,6 +398,165 @@ def test_static_analysis_tools_are_pinned_to_single_version() -> None:
             f"{pkg} 必须钉死单版本（实际 {specs[0]}）；"
             "升级走 dependabot 评审后改钉新单版本，解除前提见该文件注释与 pitfalls §3.8"
         )
+
+
+# ── .github/workflows/extras-health.yml（夜间治理链路）──────────────────
+
+
+def _step_with_blocks(text: str, action_contains: str) -> list[str]:
+    """截取每个 ``uses: *<action_contains>*`` step 的 ``with:`` 入参文本块。
+
+    纯行文本实现（不 import yaml）：PyYAML 未出现在 requirements-dev.txt / pyproject.toml，
+    CI 各腿只靠传递依赖拿到它，不能把契约测试挂在它身上——与本文件既有的
+    ``_read_text`` / ``_job_section`` / ``_declared_codecov_flags`` 同一范式。
+    """
+    lines = text.splitlines()
+    blocks: list[str] = []
+    for i, ln in enumerate(lines):
+        stripped = ln.strip()
+        if not stripped.startswith("uses:") or action_contains not in stripped:
+            continue
+        # 向后找紧跟的 with:，遇到下一个 step（"- " 开头）即停
+        j = i + 1
+        while j < len(lines) and lines[j].strip() != "with:":
+            if lines[j].lstrip().startswith("- "):
+                break
+            j += 1
+        assert j < len(lines) and lines[j].strip() == "with:", (
+            f"{action_contains} 的 step 没有 with: 入参块，切片逻辑需复核"
+        )
+        with_indent = len(lines[j]) - len(lines[j].lstrip())
+        collected: list[str] = []
+        k = j + 1
+        while k < len(lines):
+            cur = lines[k]
+            if cur.strip() and len(cur) - len(cur.lstrip()) <= with_indent:
+                break
+            collected.append(cur)
+            k += 1
+        blocks.append("\n".join(collected))
+    return blocks
+
+
+def _with_keys(block: str) -> set[str]:
+    """取 with: 块里的入参键名（行首缩进层级的 ``key:``）。"""
+    keys: set[str] = set()
+    for ln in block.splitlines():
+        if not ln.strip() or ln.lstrip().startswith("#"):
+            continue
+        match = re.match(r"^\s+([A-Za-z0-9_-]+):", ln)
+        if match is not None:
+            keys.add(match.group(1))
+    return keys
+
+
+def _benchmark_action_inputs_ok(block: str) -> bool:
+    """benchmark action 的入参必须用合法名，且不含本仓库曾误用过的非法名。"""
+    keys = _with_keys(block)
+    return "output-file-path" in keys and not (keys & BENCHMARK_UNDECLARED_INPUTS)
+
+
+def test_extras_health_benchmark_action_uses_declared_inputs() -> None:
+    """extras-health 的 gh-pages 推送步骤必须用 action 真实存在的入参名。
+
+    回归实证（CI run 40031692874，该 workflow 的首次运行）：runner 原文先报
+    ``Unexpected input(s) 'output-storage', 'raw-data-file'``，再报
+    ``Invalid value for 'output-file-path' input: ... is not a file``——因为
+    ``rhysd/github-action-benchmark`` 根本没有 ``raw-data-file`` 这个入参，必填的
+    ``output-file-path`` 于是回退成仓库目录。后果是趋势图从未落盘（gh-pages 存在，
+    ``dev/extras-health/`` 404），而 CI 里只留下一条没有 annotation 的 step 失败。
+    同仓库 benchmark.yml 用的是 ``output-file-path`` 且长期成功，是现成参照物。
+    """
+    blocks = _step_with_blocks(_read_text(EXTRAS_HEALTH_YML), "rhysd/github-action-benchmark")
+    assert blocks, "extras-health.yml 里没有 benchmark action 步骤，切片逻辑需复核"
+    for block in blocks:
+        assert _benchmark_action_inputs_ok(block), (
+            f"benchmark action 入参非法：缺 output-file-path 或含 {sorted(BENCHMARK_UNDECLARED_INPUTS)} "
+            f"中的非法键，实际键为 {sorted(_with_keys(block))}；"
+            "action 会静默忽略未知入参并把 output-file-path 回退成目录，趋势图永不落盘"
+        )
+
+    # 反例 1：删掉 output-file-path，谓词必须返回 False（否则守卫是恒真的假绿）。
+    dropped = "\n".join(
+        ln for ln in blocks[0].splitlines() if not ln.lstrip().startswith("output-file-path:")
+    )
+    assert not _benchmark_action_inputs_ok(dropped), (
+        "去掉 output-file-path 后谓词仍为真——守卫形同虚设"
+    )
+    # 反例 2：把合法键改回曾经误用的 raw-data-file，同样必须被拦下。
+    reverted = blocks[0].replace("output-file-path:", "raw-data-file:")
+    assert not _benchmark_action_inputs_ok(reverted), (
+        "改回 raw-data-file 后谓词仍为真——守卫形同虚设"
+    )
+
+
+def _github_output_offenders(name: str, text: str) -> list[str]:
+    """找出「引号 heredoc 体内以 ``$VAR`` 形式引用 GITHUB_OUTPUT/GITHUB_ENV」的位置。
+
+    引号定界符（``<<'PY'``）会让 bash **不做变量展开**，于是 Python 侧看到的
+    ``"$GITHUB_OUTPUT"`` 是字面量文件名：写入成功、进程 0 退出、step 恒绿，而
+    ``steps.<id>.outputs.*`` 永远为空。
+    """
+    offenders: list[str] = []
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        match = re.search(r"<<-?\s*'([A-Za-z_][A-Za-z0-9_]*)'", ln)
+        if match is None:
+            continue
+        delim = match.group(1)
+        for offset, body_ln in enumerate(lines[i + 1 :], start=1):
+            if body_ln.strip() == delim:
+                break
+            if re.search(r"\$GITHUB_(OUTPUT|ENV)\b", body_ln):
+                offenders.append(f"{name}:{i + 1 + offset}: {body_ln.strip()}")
+    return offenders
+
+
+def test_no_workflow_writes_github_output_inside_quoted_heredoc() -> None:
+    """workflow 里不得在引号 heredoc 中用 ``$GITHUB_OUTPUT`` 字面量写步骤输出。
+
+    回归实证（extras-health.yml 的 Evaluate health 步骤）：
+    ``python - <<'PY'`` 里写 ``open("$GITHUB_OUTPUT", "a")``，Python 打开的是字面叫
+    ``$GITHUB_OUTPUT`` 的文件，进程 0 退出所以 collect job 恒绿；而
+    ``steps.eval.outputs.{decision,write_lock,clear_lock,create_issue,close_issue}``
+    永远为空 → 写/清 sentinel 锁、建/关 tracking Issue 四处步骤从未执行过一次，
+    extras-governance.md §4 的 R4 熔断加严链路整条是死的。
+    """
+    offenders: list[str] = []
+    for yml in sorted(WORKFLOWS_DIR.glob("*.yml")):
+        offenders.extend(_github_output_offenders(yml.name, _read_text(yml)))
+    assert not offenders, (
+        f"引号 heredoc 里出现了不会展开的 $GITHUB_OUTPUT/$GITHUB_ENV：{offenders}；"
+        '改用 os.environ["GITHUB_OUTPUT"]，或去掉定界符引号（但会把整段脚本暴露给 shell 展开）'
+    )
+
+    # 边界：块外直写 ``echo ... >> "$GITHUB_OUTPUT"`` 是合法写法，不得误伤。
+    # 这几条断言同时排除「根本没扫到 run 块」的假绿——证明这些写法确实存在。
+    for legit in (CI_YML, BENCHMARK_YML, RELEASE_YML):
+        assert '"$GITHUB_OUTPUT"' in _read_text(legit), (
+            f"{legit.name} 不再有块外直写 $GITHUB_OUTPUT 的写法，本用例的边界覆盖需复核"
+        )
+
+    # 反例：同一个字面量放进引号 heredoc 里必须被抓到。
+    synthetic = (
+        "        run: |\n"
+        "          python - <<'PY'\n"
+        '          open("$GITHUB_OUTPUT", "a")\n'
+        "          PY\n"
+    )
+    assert _github_output_offenders("synthetic.yml", synthetic), (
+        "谓词抓不到引号 heredoc 里的 $GITHUB_OUTPUT——守卫形同虚设"
+    )
+    # 反例的对称面：os.environ 写法（无 $）必须放行，否则守卫会误伤正确修复。
+    fixed = (
+        "        run: |\n"
+        "          python - <<'PY'\n"
+        '          open(os.environ["GITHUB_OUTPUT"], "a")\n'
+        "          PY\n"
+    )
+    assert not _github_output_offenders("fixed.yml", fixed), (
+        "os.environ 写法被误判——守卫会拦住正确修复"
+    )
 
 
 if __name__ == "__main__":

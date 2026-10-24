@@ -44,6 +44,7 @@
 | 3.8 | 静态门禁的平台盲区 | lint/typecheck 跑 ubuntu：`EXE001` 在 NTFS 恒不可见（`tools/*.py` 勿加 shebang）；mypy 按运行平台解析 typeshed，须 `--platform linux` 才看得见 CI 那一面。ruff/mypy/types-requests 已钉死单版本 |
 | 3.9 | 测试桩的原语选择 | 挂起用 `Event().wait(30/120)` 而非 `sleep(1e9)`（py3.10 Win/macOS 立即抛错）；验 workers 必钉 `os.cpu_count`；只读目标语义分平台、须互为反向 skipif；PTY 合流须 `raw_decode`；权重归一化用 `math.fsum` |
 | 3.10 | 排队好图被连带判死 | `future.running()` 进 call_queue 即为真 → 看门狗 deadline 从入队起算；真实池下非确定性。产品缺口已知未修，强断言由确定性假池用例钉住 |
+| 3.11 | 可选依赖探测漏 `SystemExit` | `except ImportError` 挡不住 `face_recognition` import 期的 `quit()`（`SystemExit` 不是 `ImportError`）→ 收集阶段打死 session、覆盖率无数据、门禁假报「不达标」；且 `SystemExit(None)` 退出码是 **0**，会吞掉 CLI 的 JSON 输出 |
 
 > 完整细节 → [docs/agent-context/pitfalls.md](docs/agent-context/pitfalls.md)
 
@@ -60,6 +61,8 @@
 | 4.5 | H-10/11/12 | MCP 高危审查 | MCP 安全护栏必须比 CLI 更严格 |
 | 4.6 | 产物复核 | 12 腿覆盖率产物 | 只在 1/12 腿命中的行是测试稳定性信号而非噪声；产物只含 coverage.xml 时「腿为什么红」不可诊断 |
 | 4.7 | 跨平台收口 | 8 类 CI 红灯 | 本地绿≠CI 绿：静态 job 跑 ubuntu，须 `mypy --platform linux` 自检；测试桩的原语选择本身就是跨平台契约；请求自带的前提（「版本漂移」）要在证据到位后复核并公开订正 |
+| 4.8 | §4.7 复验 | 双向证据补录 | fixes.md §4.8 是 §4.7 的独立复验补录（未在本表单列教训）；「本地全绿」的前提是工具链与被钉版本同源 + 对照副本真的是未修复那一份 |
+| 4.9 | extras 收口 | extras 腿 + 趋势图双红灯 | 「配了但没接线」第三例：`continue-on-error` 吞掉 INTERNALERROR → 门禁把「无数据」误报成「未达标」；action 入参名与引号 heredoc 里的 `$GITHUB_OUTPUT` 都只会在真跑时暴露。初判（覆盖率跌破 floor）被日志证伪并公开订正 |
 
 > 完整细节 → [docs/agent-context/fixes.md](docs/agent-context/fixes.md)
 
@@ -105,6 +108,8 @@ flashgaze/                  # 源码根目录
 └── webui/                  # Web GUI（app.py 界面 + runner.py 执行层 + gallery.py；Gradio 4.21–6.x，完整实测钉 6.24.0）
 
 tests/                      # 单元测试 + fixtures（e2e 默认排除）
+├── test_coverage_gate_contract.py   # 门禁契约守卫（14 条，纯 stdlib，不 import yaml）
+└── test_portrait_import_guard.py    # 可选依赖 import 期 quit() 的子进程回归用例（见 §3.11）
 benchmarks/                 # 性能基准（pytest-benchmark，默认排除）
 pyproject.toml              # 单一配置源（PEP 621）
 .coveragerc / .coveragerc-extras  # 覆盖率门禁
@@ -122,7 +127,7 @@ docs/agent-context/         # 作用域文档（architecture / pitfalls / fixes 
 | `typecheck` | push/PR | ✅ | mypy strict 全量（`files = flashgaze + tests + tools/bench`） |
 | `lint` | push/PR | ✅ | ruff check + format --check |
 | `agents-md-integrity` | push/PR | ✅ | `python -m tools.check_agents_md`：AGENTS.md 1-9 节齐全 **且** `docs/agent-context/` 四篇作用域文档存在（纯 stdlib，无需装依赖） |
-| `extras` | push/PR | ✅ | 可选模块硬门槛（mcp_server 82 / webui.app 80 / xlsx_exporter 95） |
+| `extras` | push/PR | ✅ | 可选模块硬门槛（mcp_server 82 / webui.app 80 / xlsx_exporter 95）；step 6 带 `.coverage` **存在且非空**前置检查，把「无数据」与「未达标」在日志里分开（2026-10-24 前这 3 条下限从未在 CI 真实比对过） |
 | `check-strict` | push/PR | ➡️ 前置 | 读 `.github/extras-strict.lock` sentinel，输出 `strict` 供 `extras` job 决定是否把总下限加严到 60 |
 | `e2e` | push/PR | ✅ | Playwright Chromium + Firefox 双必选门禁 |
 | `e2e-webkit` | 手动 dispatch 且勾选 `run_webkit` | ❌ 非门禁 | `continue-on-error: true`，默认不触发 |
@@ -167,7 +172,9 @@ docs/agent-context/         # 作用域文档（architecture / pitfalls / fixes 
 
 ---
 
-**最后更新**：2026-10-23（收口 run 39909374394 的 8 类 CI 红灯：两个静态 job（`ruff` 的 `EXE001` × 2、`mypy` 的 `_winapi.CreateJunction`——根因是 ubuntu 门禁 / Windows 开发机的**平台盲区**，**不是**最初判断的版本漂移；该前提已在拿到日志后证伪并公开订正）+ `test` 12 腿红 10 条的六类跨平台/跨版本用例问题（macOS 3 核把 workers 钳到 3、py3.10 上 `time.sleep(1e9)` 立即抛错而非挂起、POSIX 只读目标不挡 `os.replace`、PTY 合流使 JSON 尾部多出 INFO 行、真实池排队好图被同代 deadline 连带判死、3.10/3.11 权重末位与 3.12+ 不等）。新增 §3.8/§3.9/§3.10 与 §4.7；`tools/*.py` 去掉 shebang；`requirements-dev.txt` 钉死 `ruff==0.16.10`/`mypy==1.20.2`/`types-requests==2.33.0.20261006`；`Makefile` 增 `typecheck-posix` 并并入 `make check`；`tests/test_coverage_gate_contract.py` 由 11 条增至 12 条；§5 补「覆盖率门禁不在 `make test`/`make verify` 里」的口径提示。逐类取证与未本地验证项见 `docs/agent-context/fixes.md` §4.7）
+**最后更新**：2026-10-24（收口 `main @ 9659ad5` 的两个远端红灯 + 一条不红隐患。**初判已被证伪并公开订正**：先假设「extras 腿是 2026-09-06 冻结的逐模块下限 82/80/95 与当前真实覆盖率第一次对撞」，拿到 raw log 后证实根本没有覆盖率数据——`face_recognition` 在 import 期 `quit()` 抛 `SystemExit`（py3.12 venv 无 setuptools → `pkg_resources` 缺失），穿透了只兜 `ImportError` 的守卫，pytest 在收集阶段 `INTERNALERROR` exit 3，被 `continue-on-error` 吞掉，门禁于是 `No data to report.` exit 1，与「未达标」在日志里不可分辨（`coverage-extras-*` 产物跨最近 5 次 run 从未存在）。三处修复：① `portrait_engine.py` 探测守卫改 `except (ImportError, SystemExit)` + 新增 `tests/test_portrait_import_guard.py`（子进程注入「import 即 quit()」的假包，第二用例钉住 `SystemExit(None)` 退出码为 **0** 这一陷阱——它会吞掉 CLI 的 JSON 输出）；② `extras-health.yml` charts 步骤 `raw-data-file` → `output-file-path` 并删 `output-storage`（均非该 action 的入参，runner 原文已抓）；③ 同文件 `python - <<'PY'` 里的 `open("$GITHUB_OUTPUT")` 改 `os.environ[...]`（引号定界符不展开变量 → `steps.eval.outputs.*` 恒空 → R4 熔断加锁与建/关 Issue 四处步骤从未执行过一次）。新增 `tests/test_coverage_gate_contract.py` 两条守卫（12→14 条：benchmark 入参名、引号 heredoc 内的 `$GITHUB_OUTPUT`，各带内置反例；守卫落地时被自己的注释打回一次，顺带证明非恒真）；ci.yml `Coverage gate (hard floors)` 加 `.coverage` 存在性前置检查与 4 条命令标签，**阈值一条未改**、也未制造第二条红源。新增 §3.11 与 §4.9；§6 补两条测试文件路径；§7 `extras` 行补口径。**待排期的口径冲突**：extras-governance §2.1 接受 dedup/portrait 的降级路径数字（不设逐模块 floor），而 §4 的 R1/R4 按「任一模块」绝对线判——链路接通后 `portrait_engine` 44% 会直接触发 R4 critical 并真的往 `main` 写 `.github/extras-strict.lock` + 开 Issue（5 模块总本地 78% ≥ 抬升后的 60，不新增红灯，但锁与 Issue 是真实产物）。逐条取证与仍只能 CI 终验项见 `docs/agent-context/fixes.md` §4.9）
+
+**前次更新**：2026-10-23（收口 run 39909374394 的 8 类 CI 红灯：两个静态 job（`ruff` 的 `EXE001` × 2、`mypy` 的 `_winapi.CreateJunction`——根因是 ubuntu 门禁 / Windows 开发机的**平台盲区**，**不是**最初判断的版本漂移；该前提已在拿到日志后证伪并公开订正）+ `test` 12 腿红 10 条的六类跨平台/跨版本用例问题（macOS 3 核把 workers 钳到 3、py3.10 上 `time.sleep(1e9)` 立即抛错而非挂起、POSIX 只读目标不挡 `os.replace`、PTY 合流使 JSON 尾部多出 INFO 行、真实池排队好图被同代 deadline 连带判死、3.10/3.11 权重末位与 3.12+ 不等）。新增 §3.8/§3.9/§3.10 与 §4.7；`tools/*.py` 去掉 shebang；`requirements-dev.txt` 钉死 `ruff==0.16.10`/`mypy==1.20.2`/`types-requests==2.33.0.20261006`；`Makefile` 增 `typecheck-posix` 并并入 `make check`；`tests/test_coverage_gate_contract.py` 由 11 条增至 12 条；§5 补「覆盖率门禁不在 `make test`/`make verify` 里」的口径提示。逐类取证与未本地验证项见 `docs/agent-context/fixes.md` §4.7）
 
 **复核补充**：2026-10-23 对上述未提交改动做独立复验（工具链先对齐到钉版 `ruff 0.16.10`/`mypy 1.20.2`/
 `types-requests 2.33.0.20261006`/`coverage 7.16.2`）。本地可证四类取得**修复前失效 + 修复后通过**双向证据：
@@ -181,4 +188,4 @@ docs/agent-context/         # 作用域文档（architecture / pitfalls / fixes 
 POSIX 只读语义、真实 PTY（本机整类 skip）、py3.10 的 `Sleep`/`select`（本机无 3.10 解释器）、
 macos-latest 真实核数与真实 spawn 池代际拆分。另订正 §9.5：`.qoder/` 不入库，其口径同步不可达 CI。
 
-**上次更新**：2026-10-23（复核 12 腿覆盖率产物：无门禁失败，但定位到四类真实问题并修复——新增假池 `_FakeProc` + `__procs__` 使「terminate 未生效→升级 kill」由 1/12 腿计时偶然变为确定性覆盖；补 `atomic_write` 两处 OSError 兜底与 `image_io._is_junction` lstat 竞态用例（后者此前 12/12 腿未覆盖）；test job 逐腿产出 junit 与失败摘要（`coverage-*` 产物保持只含 coverage.xml）；extras 投递 Codecov 的 flag 名与 `codecov.yml` 声明对齐；`coverage[toml]` 钉死 7.16.2 消除 12 腿双引擎。§3.7 / §4.6 / §7 `test` 行与 `tests/test_coverage_gate_contract.py`（8→11 条）同步）
+**更早更新**：2026-10-23（复核 12 腿覆盖率产物：无门禁失败，但定位到四类真实问题并修复——新增假池 `_FakeProc` + `__procs__` 使「terminate 未生效→升级 kill」由 1/12 腿计时偶然变为确定性覆盖；补 `atomic_write` 两处 OSError 兜底与 `image_io._is_junction` lstat 竞态用例（后者此前 12/12 腿未覆盖）；test job 逐腿产出 junit 与失败摘要（`coverage-*` 产物保持只含 coverage.xml）；extras 投递 Codecov 的 flag 名与 `codecov.yml` 声明对齐；`coverage[toml]` 钉死 7.16.2 消除 12 腿双引擎。§3.7 / §4.6 / §7 `test` 行与 `tests/test_coverage_gate_contract.py`（8→11 条）同步）

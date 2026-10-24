@@ -192,3 +192,64 @@
   CHANGELOG 里 M-17 那条「`test_cli_e2e.py` 仍被默认收集」属当时成立、现已被 marker 改写的历史记录。
 - **教训**：本地全绿的前提是「工具链与被钉版本同源」+「对照副本真的是未修复的那一份」。两者任一没核实，
   「我复现了 CI 的红灯」就只是自证。
+
+## 4.9 extras 腿与趋势图双红灯：可选依赖 import 期 quit() + action 入参名错配（2026-10-24，非审查编号项）
+
+- **远端状态**：`main @ 9659ad5` 的 CI run `39986414762` 里 12 条 `test` 腿、`ruff`、`mypy`、
+  `agents-md-integrity`、`check-strict`、`e2e chromium/firefox` 全绿，只红
+  `extras (ubuntu-latest, py3.12)` 与 `extras (macos-latest, py3.12)`；另有定时 run
+  `40031692874`（extras-health，**该 workflow 的首次运行**）红在 `publish trend charts`。
+- **初判被证伪并订正**：拿日志前先假设「2026-09-06 冻结的逐模块下限 82/80/95 与当前真实
+  覆盖率第一次对撞」。用户提供 raw log 后证实**根本没有任何覆盖率数据可言**——门禁第一步就
+  `No data to report.` exit 1，因为上一步 pytest 在收集阶段 `INTERNALERROR`（exit 3）。
+  根因是 `face_recognition` import 期 `quit()` 抛 `SystemExit` 穿透了只兜 `ImportError` 的
+  守卫（详见 pitfalls §3.11）。教训与 §4.7「请求自带的前提要在证据到位后复核并公开订正」同源，
+  且这次证伪的是**我自己**写下的假设。
+- **三处一次性修复**：
+  1. `flashgaze/core/portrait_engine.py` 的探测守卫改 `except (ImportError, SystemExit)`，
+     新增 `tests/test_portrait_import_guard.py`（2 条：主用例 + 「退出码 0 不可作判据」反例）。
+  2. `.github/workflows/extras-health.yml` 的 charts 步骤：`raw-data-file` →
+     `output-file-path`，并删掉 `output-storage`（两者都不是
+     `rhysd/github-action-benchmark` 的入参；runner 原文
+     `Unexpected input(s) 'output-storage', 'raw-data-file'` +
+     `Invalid value for 'output-file-path' input: … is not a file`）。
+     同仓库 `benchmark.yml:174` 用的是 `output-file-path` 且长期成功，是现成参照物。
+  3. 同文件 `Evaluate health` 步骤的 `python - <<'PY'` 里 `open("$GITHUB_OUTPUT", …)`：
+     引号定界符使 bash **不展开变量**，Python 打开的是字面叫 `$GITHUB_OUTPUT` 的文件、
+     进程 0 退出，`steps.eval.outputs.*` 永远为空 → 写/清 sentinel 锁与建/关 tracking Issue
+     四处步骤**从未执行过一次**，extras-governance §4 的 R4 熔断链路整条是死的。
+     改 Python 侧 `os.environ["GITHUB_OUTPUT"]`（保留引号定界符，不把整段脚本暴露给 shell）。
+- **防复发**：`tests/test_coverage_gate_contract.py` 由 12 条增至 **14 条**——
+  ① benchmark action 的 `with:` 必须含 `output-file-path` 且不含 `raw-data-file`/
+  `output-storage`；② 任何 workflow 的引号 heredoc 体内不得出现 `$GITHUB_OUTPUT`/
+  `$GITHUB_ENV`。两条都带内置反例（删键/换回误用名/合成 heredoc 必须被抓到，
+  `os.environ` 写法与 ci.yml/benchmark.yml/release.yml 的块外直写不得误伤）。
+  守卫落地时即被**自己的注释**打回一次（heredoc 内的说明文字里写了 `$GITHUB_OUTPUT`），
+  顺带证明它不是恒真断言。
+- **门禁可诊断化（阈值零变更）**：ci.yml `Coverage gate (hard floors)` 加「`.coverage` 存在且
+  非空」前置检查 + 4 条命令各一行标签，使「无数据」与「未达标」在日志里可分。用 `-s` 而非 `-f`：
+  空的数据文件同样无数据，本地反例已证 `-f` 会漏、`-s` 抓到（两条都跑出 exit 1）。不改
+  `continue-on-error`、不把 `if-no-files-found` 改成 `error`——按既有原则
+  （§4.7 与 `test_ci_test_job_uploads_junit_per_leg` 的护栏）**不让诊断步骤制造第二条红**。
+- **本地双向证据**：
+  - 失效→通过：新回归用例修复前 `F.`（子进程 `exit=0`、stdout 只有 pip 提示、无成功标记，
+    即 CI INTERNALERROR 的确定性复现），修复后 2 条全绿。
+  - 契约守卫失效→通过：先落测试 → `2 failed, 12 passed`（真文件里就是坏的）；改完 workflow
+    → `14 passed`。
+  - 本地基线：extras 口径 5 模块总覆盖 **78%**（逐模块 mcp_server 86% / webui.app 85% /
+    xlsx_exporter 100% / deduplicator 48% / portrait_engine 44%），四条硬门禁命令逐条 EXIT=0。
+- **仍然只能由 CI 终验**（不以本地绿冒充远端绿）：`82/80/95` 三条逐模块下限此前**从未在 CI 上
+  真实比对过**（extras 每次都被 `needs: test` 连带 skip），本轮第一次产出数据后能否守住须看
+  run 结果；`charts` 两步转绿、`gh-pages/dev/extras-health/` 由 404 变存在；
+  ubuntu/macos 上 `face_recognition` 是否还有别的 import 期动作。
+- **⚠️ 修好之后的新行为（必须知会）**：链路一旦接通，夜间 `collect` 会第一次真跑到 R1/R4。
+  按 pitfalls §3.11 的本地口径，`portrait_engine` 44% 与 `deduplicator` 48% 都低于 R1 的 60%，
+  且 `portrait_engine` 低于 R4 的 50% 临界线 → `decision=critical` → `write_lock=true`，
+  即**下一次定时运行会真的往 `main` 提交 `.github/extras-strict.lock` 并开 Issue**。
+  后果是 `check-strict` 输出 `strict=true`、extras 的 5 模块总下限从 50 抬到 60
+  （本地 78% 仍过，不会新增红灯，但锁与 Issue 是真实产物）。这属治理机制的设计本意第一次生效，
+  不是新缺陷；若不希望它立即接管，须先让 deduplicator/portrait_engine 脱离「降级路径」口径
+  （装 `setuptools` 真跑 face_recognition，或补这两模块的降级路径用例）。
+  **待排期的口径冲突**：extras-governance §2.1 明确接受 dedup/portrait 的降级路径数字
+  （故不设逐模块 floor），而 §4 的 R1/R4 是按「任一模块」绝对线判定的——两条规则对这两个
+  模块的口径本就不一致，此前被「数据恒为空」掩盖着。

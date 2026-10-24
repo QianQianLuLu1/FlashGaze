@@ -22,7 +22,12 @@ try:
     import face_recognition
 
     _FACE_RECOGNITION_AVAILABLE = True
-except ImportError:
+except (ImportError, SystemExit):
+    # SystemExit 必须与 ImportError 并列：上游 face_recognition 在 face_recognition_models
+    # 导入失败时（py3.12 的 venv 不再自带 setuptools，故无 pkg_resources）打印提示后直接
+    # quit()。SystemExit 继承自 BaseException、不是 ImportError，只兜后者会被直接穿透，
+    # 沿 portrait_engine -> hybrid_scorer -> factory -> cleanup 打死整个进程。
+    # 见 tests/test_portrait_import_guard.py 与 docs/agent-context/pitfalls.md §3.11。
     # cast(Any)：装/不装 face_recognition 两种环境下 mypy 都通过（见 mypy overrides）
     face_recognition = cast(Any, None)
     _FACE_RECOGNITION_AVAILABLE = False

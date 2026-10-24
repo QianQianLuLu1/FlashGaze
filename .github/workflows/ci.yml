@@ -328,9 +328,23 @@ jobs:
       - name: Coverage gate (hard floors)
         if: always()
         run: |
+          # 前置：区分「没有数据」与「数据不达标」。上方 pytest 步骤带 continue-on-error，
+          # 收集阶段崩掉（如可选依赖在 import 期 quit() 打死 session）时根本不会写出 .coverage，
+          # 四条 coverage report 只会打一句 "No data to report."——与「低于 floor」在日志里
+          # 长得一模一样（CI run 39986414762 排查耗时 7 周即源于此，见 AGENTS.md §4.6 同源教训）。
+          # 用 -s（存在且非空）而非 -f：空的数据文件同样是「无数据」。
+          # 数值阈值一条都不改；也不改成第二条红源，真正的门禁仍是 pytest 退出码。
+          [ -s .coverage ] || {
+            echo "::error::无覆盖率数据（上一步 pytest 未正常完成，见其 INTERNALERROR），非覆盖率未达标"
+            exit 1
+          }
+          echo "--- [1/4] 5 模块总下限（阈值来自 .coveragerc-extras fail_under=50）---"
           python -m coverage report --rcfile=.coveragerc-extras --include="flashgaze/mcp_server.py,flashgaze/webui/app.py,flashgaze/core/xlsx_exporter.py,flashgaze/core/deduplicator.py,flashgaze/core/portrait_engine.py"
+          echo "--- [2/4] flashgaze/mcp_server.py 逐模块下限 fail-under=82 ---"
           python -m coverage report --rcfile=.coveragerc-extras --include="flashgaze/mcp_server.py" --fail-under=82
+          echo "--- [3/4] flashgaze/webui/app.py 逐模块下限 fail-under=80 ---"
           python -m coverage report --rcfile=.coveragerc-extras --include="flashgaze/webui/app.py" --fail-under=80
+          echo "--- [4/4] flashgaze/core/xlsx_exporter.py 逐模块下限 fail-under=95 ---"
           python -m coverage report --rcfile=.coveragerc-extras --include="flashgaze/core/xlsx_exporter.py" --fail-under=95
 
       - name: Upload coverage artifact

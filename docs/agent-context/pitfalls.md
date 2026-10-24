@@ -141,3 +141,30 @@ Neumaier 补偿求和，3.10/3.11 仍是朴素左折叠；叠加两次归一化�
   并改变 `test_phase1_pool_rebuild_limit_bounds_all_hang_batch` 语义；属能力变更，需单独
   排期与兼容性评估。**勿用「把 `PER_IMAGE_TIMEOUT_SEC` 调大」当作修复**——那是同代共享
   deadline 的结构问题，翻倍阈值不改变结构，只让 12 条腿一起付墙钟。
+
+## 3.11 可选依赖的 import 守卫：`SystemExit` 不是 `ImportError`
+
+- **事实**：上游 `face_recognition` 在 `face_recognition_models` 导入失败时（Python 3.12 的
+  venv 不再自带 setuptools，`pkg_resources` 因此缺失；PEP 660 的 build isolation 只把
+  setuptools 装进隔离环境、**不进目标 venv**）打印一句 `pip install git+https://…` 提示后
+  直接调用 `quit()`。`quit()` 抛的是 `SystemExit`，它继承自 `BaseException`、**不是**
+  `ImportError`，因此 `except ImportError` 形式的依赖探测完全拦不住它。
+- **后果（CI）**：异常沿 `portrait_engine → hybrid_scorer → factory → cleanup →
+  tests/test_cleanup.py` 一路上抛，在 pytest **收集阶段**打死整个 session（exit 3，
+  `INTERNALERROR`）。extras 腿的测试步骤带 `continue-on-error: true`，于是 INTERNALERROR
+  被吞、`.coverage`/`coverage.xml` 根本没生成，硬门禁四条命令的第一条只打
+  `No data to report.` + exit 1 —— 在日志里与「覆盖率低于 floor」**长得一模一样**。
+  `Upload coverage artifact` 的 `if-no-files-found: warn` 再放行一次，所以
+  `coverage-extras-*` 产物从未存在过（跨最近 5 次 run 核实）。
+- **后果（产品）**：装了 `.[portrait]` 而 venv 无 setuptools 的用户，`python -m flashgaze
+  score` 会在 import 期被第三方包判死；`SystemExit(None)` 的**退出码是 0**，stdout 只有那句
+  pip 提示、没有任何 JSON —— 直接违反 CLI「stdout 只输出 JSON」契约（§4.7 ⑥ 同一契约）。
+  「退出码 0 即成功」的判据在这条链路上是无效的，`tests/test_portrait_import_guard.py`
+  的第二条用例专门把这个陷阱钉住。
+- **正确写法**：可选依赖的模块级探测必须 `except (ImportError, SystemExit)`
+  （见 `flashgaze/core/portrait_engine.py`）。`flashgaze/core/deduplicator.py` 同为
+  `except ImportError`，但 imagededup 无 import 期 `quit()` 的已知触发点，**暂不改动**；
+  新增可选依赖探测时若上游包会在 import 期做退出/打印之类动作，一律并列 `SystemExit`。
+- **复现要点**：本地 Windows 装不上 dlib/face_recognition，无法原样复现；
+  `tests/test_portrait_import_guard.py` 用子进程在 `PYTHONPATH` 前置一个「import 即
+  `raise SystemExit`」的假包复现，既确定性又不污染 `tests/test_portrait.py` 的双向 skipif。

@@ -35,12 +35,25 @@
 - **实测环境**：本地 Python 3.12.10，extras 口径全量测试激活（`--cov-config=.coveragerc-extras`，source 为上表 5 个模块）。门禁本身也做过实证：逐模块 `coverage report --fail-under` 全部 EXIT=0，反例 `--fail-under=99` 时 `mcp_server` 与 `webui.app` 均 EXIT=2，证明门槛真实生效而非只报告。
 - **主矩阵安装集后续已扩围**：这批下限冻结于主矩阵只装 `.[mcp]` 之时；2026-09 起 `ci.yml` 的 `test` job 实装 `.[mcp,gui,exif,heic]`（见 §1）。扩围只改变主门禁哪些模块被真实考核，不影响上表逐模块下限的数值。
 - **改阈值的同步义务**：上调/下调任一 floor，必须同时更新 `ci.yml` 的 `--fail-under` 行、`tests/test_coverage_gate_contract.py::PER_MODULE_FLOORS` 与本小节表格——三处不一致时契约测试会失败并指回本小节。
+- **上表数字直到 2026-10-24 才第一次在 CI 上被真实比对**（2026-10-24 补注）：extras job 自 M-12
+  起虽为阻塞门禁，但此后每次 CI run 都被 `needs: test` 连带 `skipped`，且真的跑起来时 pytest 在
+  收集阶段就被 `face_recognition` 的 import 期 `quit()` 打死（`SystemExit` 穿透了只兜
+  `ImportError` 的守卫），门禁只拿到 `No data to report.`。因此上表的「2026-09-06 实测」一直是
+  **唯一口径来源**，从未与 CI 数据对过账。修复与逐条取证见 `docs/agent-context/fixes.md` §4.9、
+  `docs/agent-context/pitfalls.md` §3.11。
 
 ## 3. 趋势监控与可视化（不阻塞合并）
 
 1. **Codecov 独立 flag（informational）**：`extras-ubuntu` / `extras-macos` 两个 flag 在 `codecov.yml` 中设 `informational: true` + `carryforward: true`，仅用于看板趋势，不参与 PR 合并判定。`status.patch.core` 对核心代码强制（informational:false，target 80%），可选模块 patch 保持 informational。
    - **flag 名对齐（2026-10-23 修复）**：`ci.yml` 曾写 `flags: extras-${{ matrix.os }}`，实际投递 `extras-ubuntu-latest` / `extras-macos-latest`——与上面两个声明名永不相交，`carryforward`/`informational` 对声明 flag 全程落空，可选模块的滚动覆盖率从未真正聚合，而 CI 侧完全无感。现改为 `fromJSON` 查表（`{"ubuntu-latest":"extras-ubuntu","macos-latest":"extras-macos"}[matrix.os]`），并由 `tests/test_coverage_gate_contract.py::test_ci_extras_job_codecov_flags_match_declared_flags` 双向钉住：投递名未声明 → 红；extras 矩阵新增腿未登记 → 红。教训与 §2 R 系列同源——「配置写了但没人校验」等于没写。
 2. **gh-pages 长期趋势图**：`extras-health.yml` 的 `charts` job 复用 `benchmark.yml` 的 `rhysd/github-action-benchmark` 模式，把每模块覆盖率写入 `gh-pages/dev/extras-health/`，渲染折线图（与 `dev/bench/` 同处一处，统一运维心智）。访问路径：`https://<org>.github.io/<repo>/dev/extras-health/`。
+   - **2026-10-24 前从未落盘**：`charts` 步骤把入参名写成 `raw-data-file`（并多写一个
+     `output-storage`），两者都不是该 action 的入参；唯一的必填项 `output-file-path` 于是回退成
+     仓库目录，runner 报 `Invalid value for 'output-file-path' input: … is not a file`，
+     趋势图从未成功发布（`gh-pages` 存在，`dev/extras-health/` 404）。且因为 `collect` 腿对
+     缺失 `coverage.xml` 是「按无数据处理」的优雅降级，`benchmark.json` 一直是 `[]` 而 job 恒绿，
+     R1-R4 从未真跑过。现由 `tests/test_coverage_gate_contract.py` 钉注入参名与
+     `$GITHUB_OUTPUT` 两类「配了但没接线」的缺陷。
 3. **每周 Issue 摘要**：每周一（cron `9 9 * * 1`）`weekly-report` job 把关键指标（各模块覆盖率、趋势箭头、失败用例）评论到固定 tracking Issue（环境变量 `EXTRAS_HEALTH_ISSUE`）。
 
 ## 4. 劣化熔断与升级机制（阈值规则）
@@ -54,6 +67,16 @@
 | **R3** 持续失败 | 同一测试 nodeid 在 `3` 个连续运行中失败 | warning | 建/更新 Issue |
 | **R4** 临界 | 任一模块 `< 50%`，或 R2/R3 触发后未修复再持续 `2` 个快照 | **critical** | 建 Issue + **写 sentinel 锁** |
 | **R5** 恢复 | 所有模块 `≥70%` 且连续 `2` 快照无失败 | recovered | **清锁** + 关闭 Issue |
+
+> **⚠️ 与 §2.1 的口径冲突（2026-10-24 记录，待排期）**：§2.1 明确接受
+> `deduplicator` / `portrait_engine` 的**降级路径**数字（52.33% / 47.62%，因本地缺
+> `imagededup` / `face_recognition`），故**不给它们设逐模块 floor**；而本表的 R1/R4 是按
+> 「任一模块」的绝对线判定的。按 2026-10-24 的本地实测（dedup 48% / portrait 44%），
+> 链路一旦真接通，R1 会对两个模块告警、R4 会因 `portrait < 50%` 直接判 critical 并加锁。
+> 此前这条冲突被「`benchmark.json` 恒为 `[]`、R1-R4 从未真跑」完全掩盖。
+> 处置方向二选一（均属能力变更，需单独评估）：① 让 CI 真跑到 face_recognition
+> （补 `setuptools` 使 `pkg_resources` 可用）从而脱离降级口径；② 把 R1/R4 的判定集合限定为
+> 「已设逐模块 floor 的 3 个模块」，另两模块只观测不判死。
 
 **升级为阻塞合并的闭环：**
 
