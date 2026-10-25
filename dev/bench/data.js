@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792873617151,
+  "lastUpdate": 1792914778353,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -478,6 +478,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000009971384538801663",
             "extra": "mean: 478.5573999967596 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "7288d7daf78f598f83fab80082c93fabf6f6e8ac",
+          "message": "fix(ci): 静默 portrait 探测输出并修通 extras-health rc=2 熔断链路\n\n收口 main @ dcf8c59 首次转绿后浮现的三条连带问题（阈值一条未改）：\n- portrait_engine 探测块加 redirect_stdout/stderr，上游 face_recognition 的\n  print() 不再落在 --json 子进程 stdout 头部（4 条 CLI 用例 json.loads 失败的真因）\n- extras-health.yml 的 Evaluate health 只放行 rc∈{0,2}、其它非零原样退出，\n  不再让脚本自身退出码掐断 R4 熔断的写锁/建 Issue/关 Issue 三处（§3.12）\n- extras_health.py 新增 JUDGED_MODULES 限定 R1/R2/R4，R5 同步收敛，\n  dedup/portrait 保留观测并在 Issue 表格逐行标注\n- ci.yml extras timeout-minutes 20→40（macOS 实测需 ~31 分钟）+ 补 --junitxml\n  与 junit-extras-* 产物\n- 新增 tests/test_extras_health_rules.py 7 条；test_coverage_gate_contract.py 14→17 条\n- AGENTS.md 订正 §3.11、新增 §3.12/§4.10；pitfalls/fixes/extras-governance 同步口径",
+          "timestamp": "2026-10-25T15:49:05+08:00",
+          "tree_id": "385695a73f0c17aba2874dd226484aabc9910c0e",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/7288d7daf78f598f83fab80082c93fabf6f6e8ac"
+        },
+        "date": 1792914778109,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 12.290142840874283,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006716450416882611",
+            "extra": "mean: 81.36601933333291 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.160793401588926,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0023050097746835792",
+            "extra": "mean: 75.9832609999993 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 207.72398799717345,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005306093753538133",
+            "extra": "mean: 4.81408050000276 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2387.8117711807195,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004921050355894127",
+            "extra": "mean: 418.79347948164377 usec\nrounds: 1389"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 21.76954276998251,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0072927358520030565",
+            "extra": "mean: 45.935737400000676 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 45.30706583184729,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0010803040821702387",
+            "extra": "mean: 22.071612487804913 msec\nrounds: 41"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 96.23114436366676,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002413597067154822",
+            "extra": "mean: 10.391646141304356 msec\nrounds: 92"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1534.1369244798939,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000024242371736116176",
+            "extra": "mean: 651.8323000008763 usec\nrounds: 10"
           }
         ]
       }
