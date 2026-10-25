@@ -1,6 +1,6 @@
 """覆盖率门禁契约测试（审查项 M-12 的防退化守卫）。
 
-锁定四个配置文件的关键契约，防止覆盖率门禁被静默掏空或回退：
+锁定下列文件里可被静默掏空或回退的关键契约，防止覆盖率门禁失去牙齿：
 
 - ``.coveragerc``：主门禁 ``fail_under = 80`` 不得变更；omit 精确等于 3 个
   依赖缺失的可选模块——``mcp_server`` / ``webui.app`` 必须留在主门禁考核
@@ -16,6 +16,10 @@
   也查不出是失败/报错/未跑）；extras 投递给 Codecov 的 flag 名必须与
   ``codecov.yml`` 声明的 flags 逐字对齐（错配会让 carryforward 静默落空）。
 - ``codecov.yml``：patch/core 强制状态不得再排除 mcp_server / webui.app。
+- ``flashgaze/core/hybrid_scorer.py``：不得在**模块顶层**导入三个重可选依赖的宿主模块
+  （deduplicator / portrait_engine / vlm_client）——spawn worker 按 module+qualname 重导入
+  本模块，模块级导入等于让每个 worker 重付一遍 imagededup / face_recognition / litellm 的
+  import，是 extras macOS 腿跑不进超时预算的根因（CI run 40174423841）。
 - ``requirements-dev.txt``：coverage 引擎必须钉死单版本（不钉时 12 腿矩阵
   会因 requires-python 差异解析出两个版本，跨腿覆盖率不再是同一口径）；
   ruff / mypy / types-requests 同样钉死单版本（区间式会让 CI 与开发机各取
@@ -46,6 +50,7 @@ EXTRAS_HEALTH_YML = WORKFLOWS_DIR / "extras-health.yml"
 BENCHMARK_YML = WORKFLOWS_DIR / "benchmark.yml"
 RELEASE_YML = WORKFLOWS_DIR / "release.yml"
 TOOLS_EXTRAS_HEALTH = REPO_ROOT / "tools" / "extras_health.py"
+HYBRID_SCORER_PY = REPO_ROOT / "flashgaze" / "core" / "hybrid_scorer.py"
 
 # rhysd/github-action-benchmark 没有这两个入参（该 action 唯一的 required 入参是
 # output-file-path）。写了不会报错、只会被静默忽略，所以必须由契约测试钉住。
@@ -77,6 +82,11 @@ EXTRAS_JOB_TIMEOUT_MINUTES = 40
 # 该实测结论所在的 CI run，注释里必须留这个引用（本仓库惯例：门禁数字与取证 run 绑定，
 # 见 ci.yml / extras-health.yml 内的 run 40031692874、run 39986414762 等引用）。
 EXTRAS_TIMEOUT_EVIDENCE_RUN = "40107357212"
+
+# 上面那次「≈31 分钟」外推被证伪的 run：抬到 40 后 macOS 腿的测试步独自跑到 2091s 仍未结束。
+# 58% 停点非线性（后半程集中真进程池用例，成本 = 池数 × worker 数 × worker 冷启动 import）。
+# 该 run 号也必须留在注释里：删掉它，那条被推翻的外推就会重新被当成依据（CI run 40174423841）。
+EXTRAS_TIMEOUT_FALSIFIED_RUN = "40174423841"
 
 # extras 总下限覆盖的模块清单（--include 逗号列表，防止 --cov=flashgaze 全包
 # 数据稀释总下限信号）。
@@ -706,7 +716,11 @@ def test_ci_extras_job_timeout_covers_measured_macos_leg() -> None:
     回归实证（CI run 40107357212）：`extras (macos-latest, py3.12)` 全程 20m28s、被 runner
     在 20 分钟上限处取消，随后 `if: always()` 的 Coverage gate 报「无覆盖率数据」——看着像
     门禁失败，其实是超时派生红。同 628 条用例子集 ubuntu 97s vs macOS 824s（8.5 倍），
-    外推整 job ≈31 分钟。
+    当时按线性外推得整 job ≈31 分钟。
+
+    该外推已被 CI run 40174423841 证伪：抬到 40 后同一腿的测试步独自跑到 2091s 仍未结束。
+    本用例因此只锁「不得低于已观测下界」，不再宣称 40 就是实测需求——真正的修法是消掉
+    worker 冷导入（见 test_hybrid_scorer_keeps_heavy_optional_hosts_out_of_module_level）。
     """
     extras_job = _job_section(_read_text(CI_YML), "  extras:", "  e2e:")
     match = re.search(r"^    timeout-minutes:\s*(\d+)", extras_job, re.MULTILINE)
@@ -723,6 +737,75 @@ def test_ci_extras_job_timeout_covers_measured_macos_leg() -> None:
         f"extras job 注释缺少 CI run {EXTRAS_TIMEOUT_EVIDENCE_RUN} 引用："
         "timeout 数值会重新变成无出处的自选数字"
     )
+    # 证伪记录同样要绑定：否则「58% 停点线性外推出 31 分钟」这套已被实测推翻的算法
+    # 会重新伪装成依据，下一个人又会照着它把预算算小。
+    assert EXTRAS_TIMEOUT_FALSIFIED_RUN in extras_job, (
+        f"extras job 注释缺少证伪 run {EXTRAS_TIMEOUT_FALSIFIED_RUN} 引用："
+        "被实测推翻的外推会重新被当成依据"
+    )
+
+
+# ── spawn worker 的导入闭包 ───────────────────────────────────────────────
+
+# 这三个宿主模块各自在**模块级**探测一个重可选依赖：deduplicator → imagededup、
+# portrait_engine → face_recognition(dlib)、vlm_client → litellm。
+HEAVY_OPTIONAL_HOSTS: tuple[str, ...] = ("deduplicator", "portrait_engine", "vlm_client")
+
+# 只认出现在第 0 列的导入：`if TYPE_CHECKING:` 块内与函数体内的都带缩进，不执行、不进
+# worker 冷启动闭包，因此不在此列。
+_MODULE_LEVEL_HOST_IMPORT_RE = re.compile(
+    r"from flashgaze\.core import [^\n]*\b(?:deduplicator|portrait_engine|vlm_client)"
+    r"|from flashgaze\.core\.(?:deduplicator|portrait_engine|vlm_client) import"
+    r"|^import flashgaze\.core\.(?:deduplicator|portrait_engine|vlm_client)"
+)
+
+
+def _module_level_host_imports(text: str) -> list[str]:
+    """返回写在模块顶层（第 0 列）的重可选依赖宿主模块导入行。"""
+    return [line for line in text.splitlines() if _MODULE_LEVEL_HOST_IMPORT_RE.match(line)]
+
+
+def test_hybrid_scorer_keeps_heavy_optional_hosts_out_of_module_level() -> None:
+    """hybrid_scorer 不得在模块顶层导入三个重可选依赖的宿主模块。
+
+    回归实证（CI run 40174423841）：`extras (macos-latest, py3.12)` 的测试步跑到 2091s 仍未
+    结束、被 40 分钟预算杀掉，而同一条命令在 ubuntu 只要 404s。差额不是 macOS 天生慢
+    （默认矩阵同平台只差 1.46 倍），而是 spawn worker 按 module+qualname **重导入**本模块时，
+    把模块级导入的 imagededup / face_recognition / litellm 又付了一遍，乘在「池数 × worker 数」
+    上（tests/test_hybrid_scorer.py 一条用例即 10 次 score_batch × 4 worker = 40 次 spawn）。
+    动态侧的等价凭证是 tests/test_worker_import_budget.py（假包 + 落盘哨兵）；本条是它失效时
+    仍能指到具体行的静态兜底，且不需要起子进程。
+    """
+    text = _read_text(HYBRID_SCORER_PY)
+    assert _module_level_host_imports(text) == [], (
+        "hybrid_scorer 回到模块顶层导入重可选依赖宿主模块——spawn worker 冷启动会逐进程重付"
+        " imagededup / face_recognition / litellm 的 import（extras macOS 腿超时的根因）。"
+        "类型引用请放 `if TYPE_CHECKING:`，运行时导入请放函数体内。"
+    )
+    # 反向守卫：绿不能来自「三个模块整体不再被引用」（那等于把功能删了换时长）。
+    assert "if TYPE_CHECKING:" in text, (
+        "TYPE_CHECKING 块丢失——PortraitEngine / VLMClient 的类型引用会被迫回到运行时导入"
+    )
+    for host in HEAVY_OPTIONAL_HOSTS:
+        assert f"from flashgaze.core.{host} import" in text, (
+            f"{host} 在 hybrid_scorer 里的引用整体消失：本用例的绿来自功能被删，不是按需导入"
+        )
+
+    # 反例：改动前的形态（Deduplicator 写在第 0 列）必须被抓到。
+    regression = (
+        "from flashgaze.core.cv_engine import CVEngine\n"
+        "from flashgaze.core.deduplicator import Deduplicator\n"
+    )
+    assert _module_level_host_imports(regression) == [
+        "from flashgaze.core.deduplicator import Deduplicator"
+    ], "反例未被识别——本守卫形同虚设"
+
+    # 反例：函数体内的缩进导入是**合法**形态，不得误报（否则等于把修复本身判成违规）。
+    allowed = (
+        "    def __init__(self) -> None:\n"
+        "        from flashgaze.core.deduplicator import Deduplicator\n"
+    )
+    assert _module_level_host_imports(allowed) == [], "把函数体内导入误判成模块级导入"
 
 
 if __name__ == "__main__":

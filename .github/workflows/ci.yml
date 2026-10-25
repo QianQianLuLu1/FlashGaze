@@ -292,8 +292,15 @@ jobs:
     #     spawn 启动 + 只有 3 核，单条 test_score_batch_is_deterministic_without_vlm
     #     就 145.6s，test_hybrid_scorer.py 合计 457s、test_cli_main.py 271s；
     #   - 据此 pytest ≈24.8 分钟 + setup/install 5m33s + 门禁与上传 ≈ 31 分钟 → 取 40 留余量。
-    # 抬高预算不等于放过慢本身：真正的杠杆是 test_hybrid_scorer 的 spawn 池成本，属独立
-    # 性能议题，记在 docs/agent-context/fixes.md §4.10，不与本条门禁混在一起处理。
+    # 上面那条「≈31 分钟」外推**已被 CI run 40174423841 证伪**：抬到 40 后该腿的测试步独自
+    # 跑到 2091s（job 全程 2428s）仍未结束就被杀掉，即单步 > 34 分钟。58% 停点根本非线性——
+    # 后半程集中了真进程池用例，其成本是「池数 × worker 数 × worker 冷启动 import」，而
+    # hybrid_scorer 曾在模块级导入 deduplicator / portrait_engine / vlm_client，使每个 spawn
+    # worker 都重付一遍 imagededup / face_recognition / litellm 的 import（默认矩阵不装这三
+    # 个，所以同一平台只慢 1.46 倍——差额就是这笔税，不是 macOS 本身慢）。
+    # 修的是那个乘法：改为按需导入，见 flashgaze/core/hybrid_scorer.py 的 TYPE_CHECKING 块
+    # 与回归凭证 tests/test_worker_import_budget.py。**预算与上方全部阈值一条都没改**——
+    # 继续抬 timeout 只是花钱把根因买下来，不解决它；真跑超了再按 fixes.md 的退路处理。
     timeout-minutes: 40
     strategy:
       fail-fast: false        # 单腿失败不取消其他腿

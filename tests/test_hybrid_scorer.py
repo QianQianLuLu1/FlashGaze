@@ -736,6 +736,35 @@ def test_batch100_builds_engine_once_and_is_faster(
     )
 
 
+def test_worker_portrait_switch_keeps_result_identical(tmp_path: Path) -> None:
+    """人像开关只决定「加载与否」，不改 worker 的返回值契约。
+
+    `flashgaze/core/hybrid_scorer.py` 把 PortraitEngine 的导入与构造收进 `if enable_portrait:`
+    之后，关闭一侧改为直接给 `PortraitResult(face_count=0)`。本用例在**进程内**跑两侧并断言
+    结果相等：
+
+    - 它是该新分支的覆盖来源——`_evaluate_cv_and_portrait` 的进程内调用此前只有
+      enable_portrait=False 一侧（见本文件 `test_batch100_*`），而 `.coveragerc` 开了
+      `branch = true`，缺真分支会留下 partial branch 缺口（子进程路径不计入覆盖率）。
+    - 它同时是「拿删功能换绿」的反例守卫：装 extras 的腿若关闭路径的返回值与开启路径
+      出现分歧（例如把开启路径一并短路成空结果），这里立即判红。
+
+    图片刻意用合成纯色帧而非 fixtures：face_recognition 装上后 dlib HOG 必然检不到人脸，
+    两侧才可在 12 腿与 extras 双腿上得到同一个期望值。
+    """
+    path = tmp_path / "frame.png"
+    array = np.zeros((24, 32, 3), dtype=np.uint8)
+    array[:, :, 1] = 180
+    assert cv2.imwrite(str(path), array)
+
+    off = hs._evaluate_cv_and_portrait(str(path), False, False, False, False)
+    on = hs._evaluate_cv_and_portrait(str(path), False, False, False, True)
+
+    assert off[2] == PortraitResult(face_count=0)
+    assert on[2] == off[2], f"开启人像后返回值分歧：{on[2]} != {off[2]}"
+    assert on[3] is None and off[3] is None
+
+
 def test_no_vlm_skips_vlm_encode(photo_dir: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """--no-vlm（vlm_client=None）路径不得编码 VLM base64，零额外开销。"""
     calls: dict[str, int] = {"n": 0}

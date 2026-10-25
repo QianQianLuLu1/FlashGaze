@@ -34,12 +34,9 @@ from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from pathlib import Path
 from queue import Empty
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from flashgaze.core.cv_engine import BrisqueIntegrityError, CVEngine
-from flashgaze.core.deduplicator import Deduplicator
-from flashgaze.core.portrait_engine import PortraitEngine
-from flashgaze.core.vlm_client import VLMClient
 from flashgaze.defaults import DEFAULT_TOP
 from flashgaze.models.schemas import (
     Config,
@@ -50,6 +47,16 @@ from flashgaze.models.schemas import (
 )
 from flashgaze.utils.image_io import iter_images
 from flashgaze.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    # 仅类型引用，运行时不导入。这三个宿主模块各自在**模块级**探测重可选依赖
+    # （imagededup / face_recognition / litellm）；放进运行时导入等于让每个 spawn
+    # worker 冷启动都重付一遍——放大项是「池数 × worker 数」，实测把 extras CI 腿
+    # 在 macOS 上推到 2091s 仍未跑完（同一命令 ubuntu 404s）。
+    # 真实导入点见 _evaluate_cv_and_portrait（按开关）与 HybridScorer.__init__（装配）。
+    # 回归凭证：tests/test_worker_import_budget.py。
+    from flashgaze.core.portrait_engine import PortraitEngine
+    from flashgaze.core.vlm_client import VLMClient
 
 # ── 插件评分边界（H-1）──────────────────────────────────────────────
 # 插件返回值是不可信输入：PluginScore.score / weight 是无约束的裸 float，
@@ -253,12 +260,24 @@ def _evaluate_cv_and_portrait(
         enable_color,
         downscale,
     )
-    portrait_engine = PortraitEngine(enable=enable_portrait)
+    portrait_engine: PortraitEngine | None = None
+    if enable_portrait:
+        # 人像依赖（face_recognition → dlib + 模型加载）按开关注入：本函数在 spawn
+        # 子进程里逐 worker 执行，纯 CV 批量（默认路径）不该为它付 import 成本。
+        from flashgaze.core import portrait_engine as portrait_engine_module
+
+        portrait_engine = portrait_engine_module.PortraitEngine(enable=True)
     cv, color = cv_engine.evaluate_with_color(img_path)
     if cv.error:
         return img_path, cv, PortraitResult(face_count=0), None
-    # 复用 CV 阶段已解码的全分辨率 BGR，避免人像评分二次解码磁盘
-    portrait = portrait_engine.evaluate(img_path, preloaded_color=color)
+    # 复用 CV 阶段已解码的全分辨率 BGR，避免人像评分二次解码磁盘。
+    # 关闭人像时直接给 PortraitResult(face_count=0)：与 PortraitEngine(enable=False).evaluate()
+    # 的早返回（flashgaze/core/portrait_engine.py）逐字段相同，不构造引擎也不改语义。
+    portrait = (
+        portrait_engine.evaluate(img_path, preloaded_color=color)
+        if portrait_engine is not None
+        else PortraitResult(face_count=0)
+    )
     # 复用子进程已读图：在此时计算 PHash 编码，避免主进程 Deduplicator 重复读盘。
     # imagededup 不可用 / 编码失败时不阻塞主流程，phash_encoding 留 None。
     phash_encoding: object = None
@@ -383,7 +402,14 @@ class HybridScorer:
         self.cv_engine = cv_engine
         self.vlm_client = vlm_client
         self.config = config
-        # 装配可选引擎（依赖缺失或 enable=False 时降级为空结果，不影响主流程）
+        # 装配可选引擎（依赖缺失或 enable=False 时降级为空结果，不影响主流程）。
+        # 导入放在函数体内、构造点保持无条件：worker 不执行 __init__，故不再为这两个
+        # 宿主模块的模块级探测（face_recognition / imagededup）付冷启动成本；而主进程
+        # 的探测与构造仍是 extras 覆盖率里 deduplicator/portrait_engine 的真实来源，
+        # 条件化会让数字静默下移（回归凭证 tests/test_worker_import_budget.py）。
+        from flashgaze.core.deduplicator import Deduplicator
+        from flashgaze.core.portrait_engine import PortraitEngine
+
         self.portrait_engine = PortraitEngine(enable=config.enable_portrait)
         self.deduplicator = Deduplicator(threshold=config.dedup_threshold)
         # 阶段1看门狗统计（summary 可观测，score_paths 每次调用重置）：

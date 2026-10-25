@@ -206,3 +206,38 @@ Neumaier 补偿求和，3.10/3.11 仍是朴素左折叠；叠加两次归一化�
   §4.9（action 入参名只在真跑时暴露）是同一族缺陷的不同表现形式：**契约的一侧写了、
   另一侧没消费，且双方都恒绿**。
 
+## 3.13 模块级导入会被 spawn worker 逐个重付 ⇒ 池成本的隐性乘法
+
+- **事实**：`ProcessPoolExecutor` 的 worker 按 `module+qualname` **重新 import** 被 pickle 的
+  顶层函数所在模块。`flashgaze/core/hybrid_scorer.py` 曾在模块顶层导入 `deduplicator` /
+  `portrait_engine` / `vlm_client`，而这三个宿主模块各自在**模块级**探测一个重可选依赖
+  （`imagededup` / `face_recognition`(dlib) / `litellm`）。于是阶段 1 每起一个 worker 都把这三笔
+  import 重付一遍，总成本是「池代数 × worker 数 × 单次 import」的乘积。
+- **后果**：extras CI 腿在 macOS 上跑不完。实测同一条命令 ubuntu 测试步 404s，macOS 跑到
+  2091s 仍未结束（CI run 40174423841，被 40 分钟预算杀掉）；而默认矩阵的 ubuntu→macOS 只差
+  1.46 倍。差额就是这笔税——**默认矩阵不装那三个包，所以无税可付**。
+- **为什么本地与 12 腿都看不见**：`face_recognition` 要编 dlib、`imagededup` 拉重依赖，开发机
+  装不上（`docs/extras-governance.md` §2.1 的降级口径正源于此），12 腿矩阵也只装
+  `mcp,gui,exif,heic`。这条成本**只在装了全部 extras 的腿上存在**，是被依赖矩阵与平台
+  同时掩盖的结构性盲区——所以它必须用一条不依赖真实可选依赖的用例来钉，而不是靠人眼。
+- **修法与口径**：按需导入（`if TYPE_CHECKING:` 供类型引用、运行时导入放函数体内），且
+  `HybridScorer.__init__` 的两个构造点**保持无条件**——它们是 extras 覆盖率里
+  `deduplicator` / `portrait_engine` 的真实来源之一，条件化会让数字静默下移。worker 侧人像
+  构造收进 `if enable_portrait:`，其返回值与 `PortraitEngine(enable=False).evaluate()` 的早返回
+  逐字段相同（依据是 `portrait_engine.py` 的 `self.enable = enable and available` 双重判定 +
+  `evaluate()` 的 `if not self.enable: return PortraitResult(face_count=0)`）。
+- **一般化**：
+  1. 判据不要用计时（计时断言必 flaky，见 §3.9）。用**假包 + 独立落盘哨兵**的子进程用例
+     `tests/test_worker_import_budget.py`：假包经 `PYTHONPATH` 前置注入，真装了也照样被影子
+     覆盖，故 12 腿与 extras 双腿都是有效测量；并配一条「直接 import 假包必然落哨兵」的
+     非空洞性对照，使「没有哨兵」不被误读成「注入失效」。
+  2. 反向守卫同等重要：**「永不导入」也是绿**。既要断言关闭时不加载，也要断言开启时必须
+     加载、装配点必须加载——否则「拿删功能换时长」会伪装成优化成功。
+  3. 静态兜底 `test_hybrid_scorer_keeps_heavy_optional_hosts_out_of_module_level` 只认第 0 列
+     导入；函数体内的缩进导入是合法形态，不得误报（否则守卫会把修复本身判成违规）。
+- **连带影响（须与 §3.11 一起读）**：探测时机从「import 期」推迟到「装配 `HybridScorer` 时」。
+  §3.11 的两个缺陷（`SystemExit` 穿透、探测期 `print()` 污染 stdout）**没有因此消失**，只是
+  触发点从 pytest 收集期移到运行期；`except (ImportError, SystemExit)` +
+  `redirect_stdout/stderr` 必须原样留在模块级探测块内。`tests/test_portrait_import_guard.py`
+  测的是守卫本身，与探测发生在哪一期无关，仍有效。
+

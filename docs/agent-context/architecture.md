@@ -13,6 +13,15 @@
   - **litellm**：仅为**可选 opt-in 后端**，不是默认路径
 - **混合评分器**（`flashgaze/core/hybrid_scorer.py`）：CV 基础分 + VLM 场景补偿 = 最终分
 - **可解释性**：输出含 `vlm_reason` / `vlm_provider` 字段
+- **并发模型的导入边界**（改池相关代码前必读）：阶段 1 走 `ProcessPoolExecutor`，Windows/macOS
+  只有 `spawn`——worker 按 `module+qualname` **重导入** `hybrid_scorer`，因此本模块的**模块顶层
+  导入 = 每个 worker 的冷启动成本**。三个重可选依赖的宿主模块（`deduplicator`→imagededup、
+  `portrait_engine`→face_recognition、`vlm_client`→litellm）不得出现在模块顶层：类型引用走
+  `if TYPE_CHECKING:`，运行时导入放函数体内（`HybridScorer.__init__` 恒导入两个可选引擎以保住
+  装配语义与 extras 覆盖率来源；worker 侧人像按 `enable_portrait` 才导入）。
+  阶段 2 的 VLM 调用在主进程线程池里执行，worker 不需要 `VLMClient`。
+  代价实测为 extras CI 腿在 macOS 上 2091s 跑不完（CI run 40174423841），详见
+  `pitfalls.md` §3.13；回归凭证 `tests/test_worker_import_budget.py`。
 
 ## 2.2 可选 CV 增强维度（全部默认关闭）
 

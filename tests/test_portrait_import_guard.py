@@ -7,6 +7,11 @@
 在 pytest 收集阶段打死整个 session（CI run 39986414762 的 extras 两腿即为此，exit code 3，
 覆盖率数据根本没生成，门禁于是报 `No data to report.`）。
 
+本文件测的是**守卫本身**，与探测发生在哪一期无关：`hybrid_scorer` 后来改成按需导入
+（把 face_recognition / imagededup / litellm 移出 spawn worker 的冷启动闭包），探测时机随之
+从 import 期推迟到装配 `HybridScorer` 时，兜不住的代价只是从「收集期打死 session」变成
+「运行期崩在评分入口」——两条腿都仍是必须防的真实故障。
+
 本文件用子进程复现，而不是在本进程里改 `sys.modules`：`flashgaze.core.cleanup` 等模块
 在会话早期已被其他测试导入，就地 purge 再重导会产生第二份模块对象并污染
 `tests/test_portrait.py` 的双向 skipif 判定。子进程隔离保证状态零泄漏。
@@ -36,6 +41,10 @@ assert portrait_engine._FACE_RECOGNITION_AVAILABLE is False, "探测标志应为
 assert portrait_engine.PortraitEngine(enable=True).enable is False, "enable=True 须降级"
 
 # CI 真实崩溃入口链：tests/test_cleanup.py -> cleanup -> factory -> hybrid_scorer -> portrait_engine
+# 该链的触发时机已变：hybrid_scorer 改为按需导入后，单纯 import 不再走到人像探测（探测推迟到
+# 构造 HybridScorer 时，由 tests/test_worker_import_budget.py 钉住）。此处保留 import，
+# 钉的是「整条装配链在可选依赖 quit() 的环境里仍须可导入」；探测本身的存活由上一行
+# `import flashgaze.core.portrait_engine` 与其后的 _FACE_RECOGNITION_AVAILABLE 断言承担。
 import flashgaze.core.cleanup
 
 print({IMPORT_CHAIN_OK!r})

@@ -21,8 +21,9 @@ from flashgaze.utils.image_io import load_image_color
 # 模块级探测 face_recognition 依赖
 # 缺失时 PortraitEngine(enable=True) 也会降级为空结果，不抛异常
 #
-# 探测期必须把第三方输出整段兜住且**静默丢弃**：hybrid_scorer 在模块级导入本模块，故 CLI
-# 每次启动都会执行这块探测；上游漏出来的文字会固定在子进程 stdout 的头部——进程活着、
+# 探测期必须把第三方输出整段兜住且**静默丢弃**：本模块由 hybrid_scorer 按需导入（装配
+# `HybridScorer.__init__` 恒导入、worker 侧仅在人像开启时导入），故 CLI 每次评分都会执行
+# 这块探测；上游漏出来的文字会固定在子进程 stdout 的头部——进程活着、
 # 退出码 0、JSON 也完整，但严格 json.loads(stdout) 的调用方全数解析失败，打破「stdout 只输出
 # JSON」这条对外契约（见 flashgaze/utils/logging.py 首行）。改投 logger 也不行：set_verbose 在
 # cli/entry.py 里解析完参数才调用、晚于本探测块，WARNING 级默认输出又会在 `--json 2>&1` 合流时
@@ -37,6 +38,8 @@ except (ImportError, SystemExit):
     # 导入失败时（py3.12 的 venv 不再自带 setuptools，故无 pkg_resources）打印提示后直接
     # quit()。SystemExit 继承自 BaseException、不是 ImportError，只兜后者会被直接穿透，
     # 沿 portrait_engine -> hybrid_scorer -> factory -> cleanup 打死整个进程。
+    # 该链的触发时机已随 hybrid_scorer 改按需导入从「import 期」推迟到「装配 HybridScorer
+    # 时」，兜不住的后果不变——只是从 pytest 收集期 INTERNALERROR 变成运行期崩在评分入口。
     # 见 tests/test_portrait_import_guard.py 与 docs/agent-context/pitfalls.md §3.11。
     # cast(Any)：装/不装 face_recognition 两种环境下 mypy 都通过（见 mypy overrides）
     face_recognition = cast(Any, None)

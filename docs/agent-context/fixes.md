@@ -358,3 +358,51 @@
      属独立性能议题，本次刻意不与门禁混在一起处理。
   4. dedup / portrait 改为只观测后，二者真实劣化不再自动告警（方向② 的已知代价）。
 
+## 4.11 extras macOS 腿超时：31 分钟外推被证伪，根因是 worker 冷启动的可选依赖税（2026-10-25，非审查编号项）
+
+- **触发**：`main @ 7288d7d` 的 CI run 40174423841 结论 `cancelled`。21 个 job 里 20 个绿，唯一
+  异常是 `extras (macos-latest, py3.12)`：测试步独自跑到 **2091s** 仍未结束，job 全程 2428s 撞上
+  `timeout-minutes: 40`；随后 `if: always()` 的 `Coverage gate (hard floors)` 打「无覆盖率数据」
+  ——与 §4.10 完全同形的**派生红**，且 `coverage-extras-macos-*` / `junit-extras-macos-*` 两个产物
+  跨这两次 run 均未生成（公开 API 的产物清单可查，无需下载）。
+- **先说结论：上一轮那条「外推整 job ≈31 分钟」是错的**，且错在方法而非算术。31 分钟来自
+  「20 分钟杀在 58% 进度」的线性外推，但 pytest 进度按**用例条数**走、耗时按**用例种类**分布：
+  后半程集中了真进程池用例，单条成本是前半段的量级差异项。据此，40 分钟不是「留了余量」，
+  而是仍然低于真实需求——只是差多少当时不可知。
+- **根因取证（不是推测）**：同一条命令 ubuntu 测试步 404s、macOS >2091s（≥5.2 倍），而默认 12 腿
+  矩阵的 ubuntu→macOS 只有 1.46 倍。差额只能是「extras 装上之后才出现的每 worker 成本」。
+  逐项查导入闭包：`ProcessPoolExecutor` 的 worker 按 `module+qualname` 重导入
+  `flashgaze/core/hybrid_scorer.py`，而该文件在模块顶层导入了 `deduplicator`（模块级
+  `from imagededup.methods import PHash`）、`portrait_engine`（模块级 `import face_recognition`）、
+  `vlm_client`（模块级 `import litellm` + `litellm.exceptions`）。放大项是「池代数 × worker 数」：
+  `tests/test_hybrid_scorer.py` 的 `test_score_batch_is_deterministic_without_vlm` 一条就是
+  10 次 `score_batch` × 4 worker = 40 次 spawn。旁证是同文件 `:267` 的 PHash 编码**早就是**函数内
+  导入且有 `enable_dedup` 守卫、`tests/test_dedup.py` 还专门断言「被测代码是函数内导入」——
+  仓库本来就有正确形态，只是被模块顶层导入整个抵消掉了。
+- **修复（阈值/矩阵/预算一条未改）**：`hybrid_scorer.py` 改按需导入——`PortraitEngine` /
+  `VLMClient` 的类型引用移入 `if TYPE_CHECKING:`（`VLMClient` 全文件只有注解用途，真实构造点在
+  `core/factory.py`）；`HybridScorer.__init__` 的两个构造点改为函数体内导入但**保持无条件**；
+  worker 侧人像构造收进 `if enable_portrait:`。不改三个探测块（§3.11 刚修好的
+  `except (ImportError, SystemExit)` + `redirect_stdout/stderr` 原样留在原位）。
+- **双向证据（本地可证部分）**：
+  - 修复前失效：`tests/test_worker_import_budget.py` 4 条中 **3 红 1 绿**（绿的必须是非空洞性
+    对照），失败消息直接给出 `['imagededup', 'litellm', 'face_recognition']`。0.76s 跑完。
+  - 修复后通过：同 4 条全绿；`tests/test_coverage_gate_contract.py` 17→**18** 条全绿。
+  - 四条反例实跑判红并已还原（逐条 `git diff` 复核无残留）：A 把 `Deduplicator` 导回第 0 列 →
+    动态与静态两侧同时判红；B 把 worker 人像改成「永不加载」→ 开启侧判红（堵「拿删功能换绿」）；
+    C 把装配点构造条件化 → 探针侧判红（堵「覆盖率来源被偷偷搬走」）；D 删掉证伪 run 号 → 契约判红。
+  - 全量基线见本条末尾的验证记录。
+- **仍然只能由 CI 终验**（不以本地绿冒充远端绿）：
+  - **macOS extras 腿是否真能在 40 分钟内跑完**。预估依据：worker 闭包瘦身后 extras 腿的
+    ubuntu→macOS 倍率应回落到默认矩阵的 1.46 倍附近（≈10 分钟量级）。**这是预估不是实测**——
+    本机 `face_recognition`/`imagededup` 装不上、也没有 macOS，量化不了单次 import 的真实秒数。
+    若仍超时，下一步是 §4.10 残余缺口 3 的分片方案（分片 + `coverage combine`），**不是**继续加
+    预算，也不是撤 macOS 腿或缩小 extras 测试范围（那是 AGENTS.md §7 明示的反借口守卫）。
+  - `benchmark` job 的 ±15% 均值门禁：本次只可能让导入变快，方向安全，但仍需 CI 确认。
+  - 承接 §4.10：extras-health 链路（rc 管道 + `charts` + `weekly-report`）的首次真实执行仍是
+    今晚 19:17 UTC 定时的观察项，与本条独立。
+- **需如实记下的口径变化**：可选依赖探测时机从「import 期」推迟到「装配 `HybridScorer` 时」。
+  §3.11 的代价没有消失，只是从「收集期打死 session」变成「运行期崩在评分入口」；
+  `tests/test_portrait_import_guard.py` 与 `portrait_engine.py` 里描述崩溃链的注释已同步订正，
+  不留「注释说谎」。
+
