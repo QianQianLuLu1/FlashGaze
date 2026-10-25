@@ -21,7 +21,8 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# 上游 face_recognition 那句安装提示的前缀，用作「假模块确实被执行了」的非空洞性凭证。
+# 上游 face_recognition 那句安装提示的前缀。修复后它既不该出现在 stdout，也不该出现在
+# stderr——所以「假模块确实被执行了」的凭证不能再用它充当，改用下面独立落盘的哨兵文件。
 UPSTREAM_HINT = "Please install `face_recognition_models`"
 
 # 子进程的成功标记：只有整条导入链不被打死才会打印。
@@ -48,15 +49,27 @@ print({IMPORT_CHAIN_OK!r})
 """
 
 
-def _install_broken_face_recognition(tmp_path: Path) -> Path:
-    """在 tmp_path 造一个「import 即 print 提示 + quit()」的假 face_recognition。"""
+def _install_broken_face_recognition(tmp_path: Path) -> tuple[Path, Path]:
+    """造一个「import 即打印提示 + quit()」的假 face_recognition，返回（包目录, 执行哨兵）。
+
+    提示语**同时**打到 stdout 与 stderr：上游只打 stdout，多打一份 stderr 是为了钉住
+    「两个流都被探测块兜住」，而不是断言 stderr 天然为空。哨兵文件独立落盘，作为
+    「假模块确实被执行」的非空洞性凭证——stdout/stderr 一旦变洁净，就没别的办法
+    区分「被兜住了」和「根本没跑」。
+    """
     pkg_dir = tmp_path / "broken_pkg"
     pkg_dir.mkdir(exist_ok=True)
+    sentinel = tmp_path / "probe_ran.txt"
     (pkg_dir / "face_recognition.py").write_text(
-        f"print({UPSTREAM_HINT!r})\nraise SystemExit\n",
+        "import sys\n"
+        f"with open({str(sentinel)!r}, 'w', encoding='utf-8') as fh:\n"
+        "    fh.write('ran')\n"
+        f"print({UPSTREAM_HINT!r})\n"
+        f"print({UPSTREAM_HINT!r}, file=sys.stderr)\n"
+        "raise SystemExit\n",
         encoding="utf-8",
     )
-    return pkg_dir
+    return pkg_dir, sentinel
 
 
 def _run_child(code: str, pkg_dir: Path) -> subprocess.CompletedProcess[str]:
@@ -78,21 +91,34 @@ def _run_child(code: str, pkg_dir: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_broken_face_recognition_does_not_kill_the_import_chain(tmp_path: Path) -> None:
-    """缺陷修复主用例：第三方包 import 期 quit() 不得打死我们的导入链。
+    """可选依赖在 import 期 quit() 时：导入链必须存活，且两个流都不被污染。
 
-    修复前失效证据：子进程在 `import flashgaze.core.portrait_engine` 处被 SystemExit 终止，
-    走不到 `import flashgaze.core.cleanup`，因此 IMPORT_CHAIN_OK 不出现。
+    两层缺陷各有独立的失效证据：
+
+    ① 只兜 `ImportError` 的版本：子进程在 `import flashgaze.core.portrait_engine` 处被
+       SystemExit 终止，走不到 `import flashgaze.core.cleanup`，IMPORT_CHAIN_OK 不出现
+       （CI run 39986414762 的 extras 两腿，收集期 INTERNALERROR、覆盖率无数据）。
+    ② 兜住 SystemExit 但不抑制输出的版本：上游那句 `print()` 落在 CLI 子进程的 stdout
+       头部，进程活着、退出码 0、JSON 也完整，唯独严格 `json.loads(stdout)` 的用例集体
+       报 `Expecting value: line 1 column 1 (char 0)`（CI run 40107357212 extras 腿的
+       `TestStreamingPopen` 三条 + `test_cli_e2e_10_runs_identical_json`）——打破的是
+       「stdout 只输出 JSON」这条 Agent 消费契约。
     """
-    result = _run_child(_CHAIN_CODE, _install_broken_face_recognition(tmp_path))
+    pkg_dir, sentinel = _install_broken_face_recognition(tmp_path)
+    result = _run_child(_CHAIN_CODE, pkg_dir)
 
-    # 非空洞性：假模块确实被执行了，否则本用例等于什么都没测。
-    assert UPSTREAM_HINT in result.stdout, (
-        f"注入的 face_recognition 未被导入，用例已失效："
-        f"stdout={result.stdout!r} stderr={result.stderr!r}"
-    )
+    # 非空洞性：假模块确实被执行了（哨兵独立落盘，不依赖任何输出流）。
+    assert sentinel.exists(), "注入的 face_recognition 未被导入，用例已失效（什么都没测）"
     assert IMPORT_CHAIN_OK in result.stdout, (
         f"导入链被可选依赖的 quit() 打死（CI INTERNALERROR 复现）："
         f"exit={result.returncode} stderr={result.stderr!r}"
+    )
+    # stdout 洁净性：CLI「stdout 只输出 JSON」契约在此收口，第三方探测期不得外溢。
+    assert UPSTREAM_HINT not in result.stdout, (
+        f"可选依赖探测期的输出漏进了 stdout（会打破 CLI 的 JSON 契约）：{result.stdout!r}"
+    )
+    assert UPSTREAM_HINT not in result.stderr, (
+        f"可选依赖探测期的输出漏进了 stderr：{result.stderr!r}"
     )
     assert result.returncode == 0, (
         f"子进程异常退出：exit={result.returncode} stderr={result.stderr!r}"
@@ -105,8 +131,11 @@ def test_exit_code_alone_cannot_detect_the_killed_chain(tmp_path: Path) -> None:
     这钉住了两件事：① 产品侧危害是真的——用户会拿到「退出码 0 + stdout 只有 pip 提示 +
     没有任何 JSON」，直接违反 CLI「stdout 只输出 JSON」契约；② 主用例不能简化成
     「returncode == 0 即通过」，因为被杀死的链路 rc 也是 0，唯一可信的判据是成功标记缺席。
+
+    本用例刻意**不经过**我们的守卫（裸 import），因此提示语必然出现在 stdout 里，
+    与主用例的「not in stdout」断言互为反向，二者不可能同时恒真。
     """
-    pkg_dir = _install_broken_face_recognition(tmp_path)
+    pkg_dir, _ = _install_broken_face_recognition(tmp_path)
     result = _run_child(_BARE_CODE, pkg_dir)
 
     assert result.returncode == 0, (

@@ -13,11 +13,18 @@
   - history.json    追加本快照后的历史（落地 gh-pages）
 
 判定规则（默认阈值，见 DEFAULT_CONFIG）：
-  R1 绝对下限 warning：任一模块 line 覆盖率 < ABS_WARN(60%)
-  R2 连续劣化 warning：任一模块周环比降 >= DROP_PP(5) 且连续 N_DROP(3) 个快照
+  R1 绝对下限 warning：判定集内任一模块 line 覆盖率 < ABS_WARN(60%)
+  R2 连续劣化 warning：判定集内任一模块周环比降 >= DROP_PP(5) 且连续 N_DROP(3) 个快照
   R3 持续失败 warning：同一测试 nodeid 在 K_FAIL(3) 个连续运行中失败
-  R4 临界 critical：任一模块 < CRIT_LINE(50%)，或 R2/R3 触发后未修复再持续 M_UNFIXED(2) 快照
-  R5 恢复 recovered：所有模块 >= RECOVER_LINE(70%) 且连续 2 快照无失败测试
+  R4 临界 critical：判定集内任一模块 < CRIT_LINE(50%)，或 R2/R3 触发后未修复再持续 M_UNFIXED(2) 快照
+  R5 恢复 recovered：判定集内所有模块 >= RECOVER_LINE(70%) 且连续 2 快照无失败测试
+
+  R1/R2/R4/R5 的「模块」指 JUDGED_MODULES（= ci.yml 里带逐模块 --fail-under 的那 3 个）；
+  其余 2 个可选模块仍进 snapshot / benchmark.json / Issue 表格，但只观测不判死。R3 不设模块范围。
+
+退出码：critical 返回 **2**（供调用方区分级别）。调用方若把「非零」一律当崩溃，
+就会让 critical 分支的后续动作（写锁 / 建 Issue）整条被跳过 —— 见
+.github/workflows/extras-health.yml 的 Evaluate health 步骤。
 
 纯逻辑（parse_* / evaluate / load_history / render_*）与 I/O 分离，便于本地单测。
 
@@ -44,6 +51,20 @@ MODULES = [
     "flashgaze.core.deduplicator",
     "flashgaze.core.portrait_engine",
 ]
+
+# ── 判定集：R1/R2/R4/R5 只对这些模块生效 ─────────────────────────────────
+# 逐字等于 ci.yml 里带 `--fail-under=` 的模块集合（由
+# tests/test_coverage_gate_contract.py 钉住，补/删逐模块 floor 时不同步就判红）。
+# deduplicator / portrait_engine 刻意留在 MODULES 里进快照与趋势图，但**只观测不判死**：
+# 它们的实测值来自「本地/CI 装不上 imagededup、face_recognition」的降级口径（见
+# docs/extras-governance.md §2.1），而 R1/R4 按「任一模块」的绝对线判定 —— 二者叠加会让
+# 一个测量口径问题伪装成质量临界（CI run 40134963461 的 R4 即 portrait 47.62% 触发）。
+# 代价须知情：这两个模块真实跌破 60% 甚至 50% 都不再自动告警/加锁，靠人看趋势图。
+JUDGED_MODULES = (
+    "flashgaze.mcp_server",
+    "flashgaze.webui.app",
+    "flashgaze.core.xlsx_exporter",
+)
 
 # 模块 owner（用于自动指派清理 Issue）。占位为 GitHub 用户名或团队 slug；
 # 落地时替换为实际负责人，留空字符串表示暂不指派。
@@ -133,8 +154,12 @@ def parse_coverage(xml_path: Path) -> dict[str, dict]:
         if match is None:
             continue
         lines = cls.find("lines")
-        total = len(lines) if lines is not None else 0
-        covered = sum(1 for ln in (lines or []) if int(ln.get("hits", "0")) > 0)
+        # 不写 `lines or []`：ElementTree 元素的真值判定已弃用（未来版本恒为 True，会让
+        # 空 <lines> 与缺失 <lines> 分不开），且每次解析都会在 stderr 抛一条
+        # DeprecationWarning —— 夜间治理线的日志噪声本身就难归因（见 AGENTS.md §4.6）。
+        line_nodes = [] if lines is None else list(lines)
+        total = len(line_nodes)
+        covered = sum(1 for ln in line_nodes if int(ln.get("hits", "0")) > 0)
         br_total = br_cov = 0
         for ln in cls.iter("line"):
             cond = ln.get("condition-coverage")
@@ -235,9 +260,11 @@ def evaluate(
     warnings: list[dict] = []
     criticals: list[dict] = []
 
-    present = {m: modules[m]["line_pct"] for m in MODULES if modules[m]["line_pct"] is not None}
+    present = {
+        m: modules[m]["line_pct"] for m in JUDGED_MODULES if modules[m]["line_pct"] is not None
+    }
 
-    # R1：绝对下限（仅对有覆盖率数据的模块判定）
+    # R1：绝对下限（仅对判定集中有覆盖率数据的模块判定）
     for m, pct in present.items():
         if pct < cfg["abs_warn"]:
             warnings.append(
@@ -263,9 +290,9 @@ def evaluate(
                 }
             )
 
-    # R2：连续 N 个快照周环比降幅 >= drop_pp
+    # R2：连续 N 个快照周环比降幅 >= drop_pp（判定集内）
     recent = [h for h in history if h.get("modules")][-(cfg["n_drop"]) :]
-    for m in MODULES:
+    for m in JUDGED_MODULES:
         seq = [h["modules"].get(m) for h in recent]
         if None in seq:
             continue
@@ -324,6 +351,8 @@ def evaluate(
 
     # 决策与动作
     no_fail = len(failures) == 0
+    # 判定集内的达标口径（与 R1/R4 同一集合，保证「能加锁」与「能解锁」对称：
+    # 若 R5 仍按全集判，portrait 的降级口径会让锁一旦写上就永远解不掉，自愈失效）。
     all_above_recover = (
         all(p is not None and p >= cfg["recover_line"] for p in present.values())
         if present
@@ -346,14 +375,14 @@ def evaluate(
         decision = "warning"
         actions["create_issue"] = True
     elif all_above_recover and no_fail and len(history) >= cfg["recover_clean"]:
-        # R5 恢复：最近 recover_clean 个快照均达标且无失败
+        # R5 恢复：最近 recover_clean 个快照的判定集模块均达标且无失败
         tail = history[-cfg["recover_clean"] :]
         tail_ok = (
             all(
                 all(
                     p is not None and p >= cfg["recover_line"]
-                    for p in h.get("modules", {}).values()
-                    if p is not None
+                    for m, p in h.get("modules", {}).items()
+                    if m in JUDGED_MODULES
                 )
                 and len(h.get("failures", [])) == 0
                 for h in tail
@@ -389,7 +418,9 @@ def _render_issue(
     lines.append("### 各模块 line 覆盖率")
     for m in MODULES:
         pct = snapshot["modules"].get(m)
-        lines.append(f"- `{m}`: {pct if pct is not None else 'n/a'}%")
+        # 判定集外的模块显式标注，避免读 Issue 的人把「没告警」当成「没数据/没问题」。
+        note = "" if m in JUDGED_MODULES else "（观测项，不参与 R1/R2/R4/R5 判定）"
+        lines.append(f"- `{m}`: {pct if pct is not None else 'n/a'}%{note}")
     if snapshot["failures"]:
         lines.append("")
         lines.append(f"### 失败用例（{len(snapshot['failures'])}）")

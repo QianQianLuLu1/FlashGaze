@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 from typing import Any, cast
 
 import cv2
@@ -18,8 +20,16 @@ from flashgaze.utils.image_io import load_image_color
 
 # 模块级探测 face_recognition 依赖
 # 缺失时 PortraitEngine(enable=True) 也会降级为空结果，不抛异常
+#
+# 探测期必须把第三方输出整段兜住且**静默丢弃**：hybrid_scorer 在模块级导入本模块，故 CLI
+# 每次启动都会执行这块探测；上游漏出来的文字会固定在子进程 stdout 的头部——进程活着、
+# 退出码 0、JSON 也完整，但严格 json.loads(stdout) 的调用方全数解析失败，打破「stdout 只输出
+# JSON」这条对外契约（见 flashgaze/utils/logging.py 首行）。改投 logger 也不行：set_verbose 在
+# cli/entry.py 里解析完参数才调用、晚于本探测块，WARNING 级默认输出又会在 `--json 2>&1` 合流时
+# 重新污染 JSON。可用性信号是下面的 _FACE_RECOGNITION_AVAILABLE，不依赖这句 pip 指引。
 try:
-    import face_recognition
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        import face_recognition
 
     _FACE_RECOGNITION_AVAILABLE = True
 except (ImportError, SystemExit):

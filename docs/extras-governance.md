@@ -29,8 +29,8 @@
 | `flashgaze/mcp_server.py` | 87.71% | **82** | |
 | `flashgaze/webui/app.py` | 85.77% | **80** | |
 | `flashgaze/core/xlsx_exporter.py` | 100% | **95** | |
-| `flashgaze/core/deduplicator.py` | 52.33% | 不设逐模块下限 | 本地缺 `imagededup`，52.33% 只是降级路径口径；由总下限 50 + 夜间 R1/R4 兜底 |
-| `flashgaze/core/portrait_engine.py` | 47.62% | 不设逐模块下限 | 本地缺 `face_recognition`（torch/dlib 过重），同上 |
+| `flashgaze/core/deduplicator.py` | 52.33% | 不设逐模块下限 | 本地缺 `imagededup`，52.33% 只是降级路径口径（CI run 40107357212 的 ubuntu extras 腿真装 imagededup 后实测 **83.72%**）。夜间治理按 §4 方向② **只观测不判死** |
+| `flashgaze/core/portrait_engine.py` | 47.62% | 不设逐模块下限 | 本地缺 `face_recognition`（torch/dlib 过重），同上。CI 侧虽装了 `.[portrait]`，但 py3.12 venv 无 `pkg_resources` → import 期 `quit()` 被守卫兜住后仍走降级路径，实测 **47.62%**（与本地数字巧合相同，见 §4 口径冲突）；夜间同样**只观测** |
 
 - **实测环境**：本地 Python 3.12.10，extras 口径全量测试激活（`--cov-config=.coveragerc-extras`，source 为上表 5 个模块）。门禁本身也做过实证：逐模块 `coverage report --fail-under` 全部 EXIT=0，反例 `--fail-under=99` 时 `mcp_server` 与 `webui.app` 均 EXIT=2，证明门槛真实生效而非只报告。
 - **主矩阵安装集后续已扩围**：这批下限冻结于主矩阵只装 `.[mcp]` 之时；2026-09 起 `ci.yml` 的 `test` job 实装 `.[mcp,gui,exif,heic]`（见 §1）。扩围只改变主门禁哪些模块被真实考核，不影响上表逐模块下限的数值。
@@ -45,7 +45,14 @@
 ## 3. 趋势监控与可视化（不阻塞合并）
 
 1. **Codecov 独立 flag（informational）**：`extras-ubuntu` / `extras-macos` 两个 flag 在 `codecov.yml` 中设 `informational: true` + `carryforward: true`，仅用于看板趋势，不参与 PR 合并判定。`status.patch.core` 对核心代码强制（informational:false，target 80%），可选模块 patch 保持 informational。
-   - **flag 名对齐（2026-10-23 修复）**：`ci.yml` 曾写 `flags: extras-${{ matrix.os }}`，实际投递 `extras-ubuntu-latest` / `extras-macos-latest`——与上面两个声明名永不相交，`carryforward`/`informational` 对声明 flag 全程落空，可选模块的滚动覆盖率从未真正聚合，而 CI 侧完全无感。现改为 `fromJSON` 查表（`{"ubuntu-latest":"extras-ubuntu","macos-latest":"extras-macos"}[matrix.os]`），并由 `tests/test_coverage_gate_contract.py::test_ci_extras_job_codecov_flags_match_declared_flags` 双向钉住：投递名未声明 → 红；extras 矩阵新增腿未登记 → 红。教训与 §2 R 系列同源——「配置写了但没人校验」等于没写。
+   - **flag 名对齐（2026-10-23 修复）**：`ci.yml` 曾写 `flags: extras-${{ matrix.os }}`，实际投递 `extras-ubuntu-latest` / `extras-macos-latest`——与上面两个声明名永不相交，`carryforward`/`informational` 对声明 flag 全程落空，可选模块的滚动覆盖率从未真正聚合，而 CI 侧完全无感。现改为 `fromJSON` 查表（`{"ubuntu-latest":"extras-ubuntu","macos-latest":"extras-macos"}[matrix.os]`），并由 `tests/test_coverage_gate_contract.py::test_ci_extras_job_posts_declared_codecov_flags` 双向钉住：投递名未声明 → 红；extras 矩阵新增腿未登记 → 红。教训与 §2 R 系列同源——「配置写了但没人校验」等于没写。
+   - **2026-10-25 复核：flag 名对齐了，但投递从未成功**。CI run 40107357212 的**每一条腿**
+     都报 `Upload queued for processing failed: {"message":"Token required - not valid tokenless upload"}`，
+     即 `secrets.CODECOV_TOKEN` 缺失或失效；`fail_ci_if_error: false` 让这一步恒绿，所以
+     §5.1 checklist 第 3 条「确认 `secrets.CODECOV_TOKEN` 可用」实际从未被核实。后果：
+     上面花力气对齐的两个 flag 依然没有任何数据进来，carryforward/informational 继续落空，
+     本节的「可视化防线」第一层仍是死的。**属仓库 secret 配置项，需人工处理**，
+     不应靠放宽 `fail_ci_if_error` 或改投递方式来掩盖。
 2. **gh-pages 长期趋势图**：`extras-health.yml` 的 `charts` job 复用 `benchmark.yml` 的 `rhysd/github-action-benchmark` 模式，把每模块覆盖率写入 `gh-pages/dev/extras-health/`，渲染折线图（与 `dev/bench/` 同处一处，统一运维心智）。访问路径：`https://<org>.github.io/<repo>/dev/extras-health/`。
    - **2026-10-24 前从未落盘**：`charts` 步骤把入参名写成 `raw-data-file`（并多写一个
      `output-storage`），两者都不是该 action 的入参；唯一的必填项 `output-file-path` 于是回退成
@@ -62,21 +69,53 @@
 
 | 规则 | 条件 | 级别 | 动作 |
 |---|---|---|---|
-| **R1** 绝对下限 | 任一模块 line 覆盖率 `< 60%` | warning | 建/更新 Issue |
-| **R2** 连续劣化 | 任一模块周环比降 `≥5pp` 且连续 `3` 个快照 | warning | 建/更新 Issue |
+| **R1** 绝对下限 | 判定集内任一模块 line 覆盖率 `< 60%` | warning | 建/更新 Issue |
+| **R2** 连续劣化 | 判定集内任一模块周环比降 `≥5pp` 且连续 `3` 个快照 | warning | 建/更新 Issue |
 | **R3** 持续失败 | 同一测试 nodeid 在 `3` 个连续运行中失败 | warning | 建/更新 Issue |
-| **R4** 临界 | 任一模块 `< 50%`，或 R2/R3 触发后未修复再持续 `2` 个快照 | **critical** | 建 Issue + **写 sentinel 锁** |
-| **R5** 恢复 | 所有模块 `≥70%` 且连续 `2` 快照无失败 | recovered | **清锁** + 关闭 Issue |
+| **R4** 临界 | 判定集内任一模块 `< 50%`，或 R2/R3 触发后未修复再持续 `2` 个快照 | **critical** | 建 Issue + **写 sentinel 锁** |
+| **R5** 恢复 | 判定集内所有模块 `≥70%` 且连续 `2` 快照无失败 | recovered | **清锁** + 关闭 Issue |
 
-> **⚠️ 与 §2.1 的口径冲突（2026-10-24 记录，待排期）**：§2.1 明确接受
+> **「判定集内」= `JUDGED_MODULES`（`mcp_server` / `webui.app` / `xlsx_exporter`，即 ci.yml 里
+> 带逐模块 `--fail-under` 的那 3 个）**。`deduplicator` / `portrait_engine` 只观测不判死，
+> 理由与代价见本节下方的口径说明。R3 不设模块范围。
+
+> **✅ 与 §2.1 的口径冲突（2026-10-24 记录 → 2026-10-25 已采方向②收口）**：§2.1 明确接受
 > `deduplicator` / `portrait_engine` 的**降级路径**数字（52.33% / 47.62%，因本地缺
-> `imagededup` / `face_recognition`），故**不给它们设逐模块 floor**；而本表的 R1/R4 是按
-> 「任一模块」的绝对线判定的。按 2026-10-24 的本地实测（dedup 48% / portrait 44%），
-> 链路一旦真接通，R1 会对两个模块告警、R4 会因 `portrait < 50%` 直接判 critical 并加锁。
-> 此前这条冲突被「`benchmark.json` 恒为 `[]`、R1-R4 从未真跑」完全掩盖。
-> 处置方向二选一（均属能力变更，需单独评估）：① 让 CI 真跑到 face_recognition
-> （补 `setuptools` 使 `pkg_resources` 可用）从而脱离降级口径；② 把 R1/R4 的判定集合限定为
-> 「已设逐模块 floor 的 3 个模块」，另两模块只观测不判死。
+> `imagededup` / `face_recognition`），故**不给它们设逐模块 floor**；而本表的 R1/R4 原是按
+> 「任一模块」的绝对线判定的。链路接通后这条冲突立即生效：CI run `40134963461` 的
+> `decision.json` 实测 `decision=critical`，criticals 唯一一条即 R4 `portrait_engine 47.62%`
+> ——一个**测量口径问题伪装成质量临界**，并且要把 `.github/extras-strict.lock` 真的推进 `main`。
+>
+> **采方向②**：R1/R2/R4/R5 的判定集合限定为 `JUDGED_MODULES` = 「已设逐模块 floor 的 3 个
+> 模块」（`mcp_server` / `webui.app` / `xlsx_exporter`），另两模块**只观测不判死**——仍进
+> `snapshot.json` / `benchmark.json` / 趋势图，Issue 表格里逐行标注「（观测项，不参与
+> R1/R2/R4/R5 判定）」，避免读 Issue 的人把「没告警」误读成「没数据」。
+> - **判定集与 floor 表锁死**：`tests/test_coverage_gate_contract.py::
+>   test_extras_health_judged_modules_match_ci_floors` 双向相等，将来给 dedup/portrait 补
+>   逐模块 floor 却忘了同步判定集（或反过来）立即判红。
+> - **R5 必须同步收敛**（否则口径不一致会往另一个方向坏）：恢复条件若仍按全集判，
+>   portrait 的降级口径会让「锁一旦写上就永远解不掉」，自愈机制形同虚设。
+>   由 `tests/test_extras_health_rules.py::test_recovery_only_needs_judged_modules` 钉住。
+> - **R3 不受影响**：用例持续失败是平台无关的质量信号，仍对全部测试生效。
+> - **代价（须知情）**：dedup / portrait 真实跌破 60% 甚至 50% 都不再自动告警、开 Issue
+>   或加锁，需人工看趋势图。方向①（extras 腿补 `setuptools` 让 `face_recognition` 真跑起来，
+>   从根上脱离降级口径）仍是更彻底的解，但它改变 CI 侧的**测量口径**、且会翻转
+>   `tests/test_portrait.py` 的双向 skipif 判定，风险独立评估，不与本次红灯收口混做。
+>
+> **同时修掉的管道缺陷**：`tools/extras_health.py` 用退出码 2 表达 critical，而
+> `Evaluate health` 步骤未兜非零码 → 步骤判红 → 下方「写锁 / 建 Issue / 关 Issue」三处
+> （均无 `if: always()`）整批 skipped，即 R4 熔断**被自己的退出码第二次掐断**（第一次是
+> 引号 heredoc 里 `$GITHUB_OUTPUT` 不展开，见 §4.9）。现步骤只放行 rc=2、其它非零码原样退出。
+> 详见 pitfalls §3.12 与 fixes §4.10。
+
+**退出码语义（调用方必读）：**
+
+| rc | 含义 | 调用方应做 |
+|---|---|---|
+| 0 | `ok` / `warning` / `recovered` | 继续执行下游步骤 |
+| 2 | `critical`（R4 命中） | **不是崩溃**：继续执行，由写锁 / 建 Issue 步骤落实动作 |
+| 其它 | 脚本崩溃 / 输入异常 | 步骤判红，需查脚本或输入文件 |
+
 
 **升级为阻塞合并的闭环：**
 

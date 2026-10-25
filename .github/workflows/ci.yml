@@ -282,7 +282,19 @@ jobs:
     # 失败才能拦住可选模块覆盖率劣化。夜间 sentinel 锁
     # （.github/extras-strict.lock）保留为加严升级机制：锁存在时 strict 步骤
     # 把 5 模块总下限抬到 60（治理 R1 告警线），强制修复直至恢复达标。
-    timeout-minutes: 20
+    #
+    # 40 分钟是按实测取的，不是拍的（原值 20 让 macOS 腿在 58% 进度处被 runner 杀掉，
+    # CI run 40107357212；派生的 Coverage gate 步骤再报「无覆盖率数据」，看着像门禁失败
+    # 其实是超时）：
+    #   - ubuntu 全程 11m23s（install 6m07s + pytest 5m06s），20 分钟对它够；
+    #   - 同一停点（前 628 条用例结果行）ubuntu 97s vs macOS 824s = **8.5 倍**，而默认
+    #     矩阵的 ubuntu→macOS 只有 1.46 倍：extras 集合里的真进程池用例在 macOS 是
+    #     spawn 启动 + 只有 3 核，单条 test_score_batch_is_deterministic_without_vlm
+    #     就 145.6s，test_hybrid_scorer.py 合计 457s、test_cli_main.py 271s；
+    #   - 据此 pytest ≈24.8 分钟 + setup/install 5m33s + 门禁与上传 ≈ 31 分钟 → 取 40 留余量。
+    # 抬高预算不等于放过慢本身：真正的杠杆是 test_hybrid_scorer 的 spawn 池成本，属独立
+    # 性能议题，记在 docs/agent-context/fixes.md §4.10，不与本条门禁混在一起处理。
+    timeout-minutes: 40
     strategy:
       fail-fast: false        # 单腿失败不取消其他腿
       matrix:
@@ -319,6 +331,7 @@ jobs:
           --cov-config=.coveragerc-extras
           --cov-report=term-missing
           --cov-report=xml:coverage.xml
+          --junitxml=junit.xml
 
       # 覆盖率硬门禁（无条件执行、阻塞合并；M-12 修复）：第一行为 5 个可选
       # 模块的总下限（fail_under=50 来自 .coveragerc-extras），其余为逐模块
@@ -353,6 +366,22 @@ jobs:
         with:
           name: coverage-extras-${{ matrix.os }}-py${{ matrix.python-version }}
           path: coverage.xml
+          if-no-files-found: warn
+
+      # extras 腿此前没有 junit：上方 pytest 步骤带 continue-on-error，可选模块的用例失败
+      # 会被完全吞掉，CI 界面上只剩「覆盖率门禁通过」这一句 —— CI run 40107357212 的 4 条
+      # CLI 失败（face_recognition 探测期污染 stdout，见 pitfalls §3.11 订正）之所以能被发现，
+      # 全靠旁路 extras-health 恰好带 --junitxml。产物名必须带 extras 前缀：extras 与 test 两
+      # 个 job 的 matrix.os / python-version 完全同名，upload-artifact@v4 会在同一次 run 内
+      # 因重名报错。
+      # 诚实标注：job 被 timeout-minutes 杀掉时 junit 不会写出（pytest 未走到收尾），本产物
+      # 只覆盖「用例失败 / 报错」两类，超时仍需看原始日志。
+      - name: Upload junit artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-extras-${{ matrix.os }}-py${{ matrix.python-version }}
+          path: junit.xml
           if-no-files-found: warn
 
       - name: Upload coverage to Codecov

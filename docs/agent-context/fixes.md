@@ -253,3 +253,108 @@
   **待排期的口径冲突**：extras-governance §2.1 明确接受 dedup/portrait 的降级路径数字
   （故不设逐模块 floor），而 §4 的 R1/R4 是按「任一模块」绝对线判定的——两条规则对这两个
   模块的口径本就不一致，此前被「数据恒为空」掩盖着。
+
+## 4.10 §4.9 的连带后果：extras 超时、rc=2 断电、stdout 污染（2026-10-25，非审查编号项）
+
+- **远端状态**（`main @ dcf8c59`，与本地 HEAD 一致）：
+  - CI run `40107357212` 结论 `cancelled`——21 个 job 里 20 个绿（12 条 `test` 腿、`ruff`、
+    `mypy`、`agents-md-integrity`、`check-strict`、`e2e chromium/firefox`、
+    **`extras (ubuntu)` 首次带真实数据转绿**，82/80/95 逐模块下限第一次真实通过，
+    证明 §4.9 的守卫修复有效），唯一红是 `extras (macos-latest, py3.12)`。
+  - extras-health run `40134963461` 结论 `failure`，红在 `collect` 的 `Evaluate health`；
+    `charts` 因 `needs: collect` 被跳过，`Publish sentinel state` / 建 Issue / 关 Issue 三处
+    `skipped`。`.github/extras-strict.lock` 在 main 上仍是 404（已核实）。
+- **取证通道**：Actions 的 job **logs 与 annotations 端点免鉴权返回 403/404**、artifact zip
+  端点 401，因此由用户从浏览器下载两份 job 日志 + `extras-health-out` +
+  `coverage-extras-ubuntu-latest-py3.12` 四个产物后分析。runs/jobs/steps 时序与产物清单
+  （含每个 step 的起止时间）公开 API 即可取，「哪一步红、红多久」全部由此定位。
+- **三条结论**：
+  1. **macOS extras 不是卡死，是预算错配**。同一停点（前 628 条用例结果行，pytest 自报 58%）
+     ubuntu **97s** vs macOS **824s = 8.5 倍**，而默认矩阵的 ubuntu→macOS 只有 1.46 倍；
+     单条最慢 `test_score_batch_is_deterministic_without_vlm` **145.6s**，
+     `test_hybrid_scorer.py` 合计 457s（55%）、`test_cli_main.py` 271s（33%）。被杀时无任何
+     stuck 单点，成本集中在真进程池用例（macOS 用 `spawn` 且只有 3 核，见 §3.9）。
+     job 前 5m33s 是 setup+install → 外推 pytest ≈24.8 分钟、整 job ≈31 分钟 > `timeout-minutes: 20`。
+     派生红：`Coverage gate (hard floors)`（`if: always()`）因 `.coverage` 未写出而报
+     「无覆盖率数据」——**这条红不是覆盖率不达标**，是超时的下游症状。
+  2. **`Evaluate health` 被脚本自己的退出码打死**。`tools/extras_health.py` 的 `main()` 用
+     `return 2` 表达 critical，步骤未兜非零码 → 步骤红 → 三处下游（无 `if: always()`）skipped，
+     §4.9 第 3 条刚接通的 outputs **一次也没被消费**。`decision.json` 实测
+     `decision=critical`、`actions.write_lock=true`、criticals 仅一条 R4（portrait 47.62%）；
+     `gh-pages` 上 `dev/extras-health/history.json` 为 404 ⇒ 历史为空，R2/R3/R4-lag 不可能触发，
+     临界只能来自绝对线（独立用 CI 真实 coverage.xml 重算 5 模块 = 87.71/85.77/100/83.72/**47.62**，
+     与产物逐字一致）。详见 pitfalls §3.12。
+  3. **4 条用例失败的真因是 stdout 被第三方 `print()` 污染**（§4.9 只修了「进程被打死」那一半）。
+     失败者恰为全部「子进程跑 CLI + 严格 `json.loads(stdout)`」用例：
+     `test_cli_terminal_e2e.py:98/:116/:160` + `test_reproducibility.py:163`，报错统一
+     `Expecting value: line 1 column 1 (char 0)`。旁证三条：同文件用容错 `_extract_json` 的
+     4 条 `TestPtyTerminal` 全绿；`assert returncode == 0` 在 `json.loads` 之前且通过；
+     `tests/test_cli_e2e.py` 被 `pytestmark = e2e` 全程去选（日志中出现 0 次），故不构成反例。
+     本地直接抓到子进程 stdout 形态为「两行 pip 提示 + 完整 JSON」。**注意 §4.9 新增的守卫
+     用例当时把「提示出现在 stdout」写成了断言**，等于把污染钉住。
+- **修复（阈值一条未改）**：
+  1. `flashgaze/core/portrait_engine.py`：探测块用 `contextlib.redirect_stdout/redirect_stderr`
+     把第三方 import 期输出整段吞掉（静默丢弃，不投 logger——`set_verbose` 在
+     `cli/entry.py:58` 才生效、晚于模块级探测；WARNING 级默认输出又会在 `--json 2>&1`
+     合流时重新污染 JSON）。
+  2. `tests/test_portrait_import_guard.py`：假包改为「stdout 打提示 + stderr 打提示」，
+     非空洞性凭证换成**独立落盘的哨兵文件**，主用例断言方向翻为 `hint not in stdout`；
+     「退出码 0 不可作判据」那条反例原样保留（它刻意裸 import，必然看到提示，与主用例互为反向）。
+  3. `.github/workflows/extras-health.yml` `Evaluate health`：`|| rc=$?` + 只在
+     `rc ∉ {0, 2}` 时按原码退出，rc=2 打 `::warning::` 后继续（真崩溃仍然是红）。
+  4. `tools/extras_health.py`：新增 `JUDGED_MODULES`（逐字等于 ci.yml 带 `--fail-under` 的
+     3 个模块），R1/R2/R4 绝对线按它过滤，**R5 同步收敛**（否则「能加锁、永远解不掉」，
+     自愈会因 portrait 的降级口径而永久失效）；`MODULES` 全集继续进 snapshot /
+     benchmark.json / Issue 表格，Issue 里给观测项显式标注「不参与判定」。R3 与 rc=2 语义不动。
+  5. `.github/workflows/ci.yml` extras job `timeout-minutes: 20 → 40`，注释绑定 run
+     `40107357212` 的实测数字（沿用本仓库「门禁数字与取证 run 绑定」的惯例）。
+  6. 同 job 补 `--junitxml=junit.xml` + 产物 `junit-extras-<os>-py<ver>`：extras 腿此前无
+     junit，`continue-on-error` 吞掉的失败完全不可见（本次 4 条能被发现纯粹因为旁路
+     extras-health 恰好带 junit）。产物名必须带 `extras` 前缀——extras 与 test 两 job 的
+     matrix 名完全相同，`upload-artifact@v4` 在同 run 内会因重名报错。**未**复制 test job
+     那 55 行 heredoc 摘要实现：两处各一份迟早漂移，属 §4.6/§4.9「配了但没接线」同族风险；
+     逐腿 job summary 仍只在 test job 提供（已知残余缺口，见下）。
+- **防复发**：`tests/test_coverage_gate_contract.py` 由 14 条增至 **17 条**——
+  ① `JUDGED_MODULES` 与 ci.yml 逐模块 floor 集合双向相等（放宽判定集 / 删一条 floor 行都判红）；
+  ② `Evaluate health` 必须「只容忍 rc=2」（缺 `|| rc=$?`、`rc -ne 0` 一律失败、`|| true`、
+  改回步级 `continue-on-error` 四种写法都判红，另断言采集步骤的 `continue-on-error` 仍在，
+  防反例失去对照）；③ extras job `timeout-minutes >= 40` 且注释含 run 号。
+  ①② 用纯文本正则解析（不 import `tools/`、不装 PyYAML），与本文件既有范式一致。
+  另新增 `tests/test_extras_health_rules.py` **7 条**：`tools/extras_health.py` 的 R1-R5 此前
+  **零单测**，用例按 CI 真实 coverage.xml 的（覆盖, 总）行数构造、子进程真实调用脚本，
+  同时断言 decision 与**退出码**。
+- **本地双向证据**：
+  - F3：`PYTHONPATH` 前置「print 提示 + quit()」假包 → 修复前 `3 failed`（Windows 上 SIGINT
+    那条 skip，故 3 而非 4），报错与 CI 逐字相同；修复后 `3 passed, 1 skipped`；守卫用例
+    翻断言后先 `1 failed`（stdout 里确有提示）再转绿。
+  - F2/口径：同一份 CI 真实 coverage.xml，`git show HEAD:tools/extras_health.py` 跑出
+    `decision=critical` + **rc=2**，工作区版跑出 `decision=ok` + **rc=0**、`write_lock=false`。
+  - rc 管道：用 stub 分别产 0/2/1/3，确认 `set -e` 下 0 与 2 走到达后续步骤、1/3 按原码退出；
+    另确认未初始化 `rc` 时 `${rc:-0}` 路径正常。
+  - 全量基线：`ruff check` / `format --check` / `mypy`（本机 + `--platform linux` 两面，80 files）/
+    `tools.check_agents_md` 全绿；`pytest tests/ -q` = **1052 passed, 29 skipped, 38 deselected**
+    （改动前 1038 passed 基线之上的增量来自本次新增 7 + 3 条与 §4.9 的 2 条守卫用例；
+    未见任何原通过用例转红）。
+- **仍然只能由 CI 终验**（不以本地绿冒充远端绿）：
+  - macOS extras 的 40 分钟是否够用：31 分钟是**在 58% 进度处的线性外推**，非实测；剩余 42%
+    含 gradio/webui 用例，若仍被杀则下一步是真去治 `test_hybrid_scorer` 的 spawn 成本，
+    而不是继续加预算。
+  - `charts` 与 `weekly-report` 在 `collect` 转绿后**首次真实执行**：`gh-pages/dev/extras-health/`
+    能否落地、`weekly-report` 往 tracking Issue #11（已核实 open 且带 `extras-health` 标签）
+    发评论是否正常。下一个触发点是周一 cron `9 9 * * 1`（2026-10-27）。
+  - `Close resolved Issue` 只在 `recovered`（判定集全 ≥70% 且连续 2 快照无失败）时触发，
+    当前 portrait 47.62% 下不可能命中，故不会误关 Issue #11；R5 收敛后该路径由
+    `test_recovery_only_needs_judged_modules` 覆盖。
+  - `junit-extras-*` 重名风险已按命名规避，但同 run 内两 job 产物的实际落地仍需 CI 验证。
+- **已知残余缺口（如实标注，不在本次处理）**：
+  1. **Codecov 从未收到任何数据**：每条腿都报
+     `Upload queued for processing failed: {"message":"Token required - not valid tokenless upload"}`，
+     即 `secrets.CODECOV_TOKEN` 缺失或失效；`fail_ci_if_error: false` 使其恒绿。§4.8/`e837d50`
+     修的 flag 名对齐因此仍无实际收益——`extras-ubuntu`/`extras-macos` 的
+     carryforward/informational 继续落空。属仓库 secret 配置项，需人工处理，**不改代码绕过**。
+  2. extras 腿仍无逐腿 job summary（只有 junit 产物），且 **job 被 timeout 杀掉时 junit
+     不会写出**，超时类问题仍需原始日志。
+  3. macOS extras 的真实性能杠杆在 `test_hybrid_scorer` 的 spawn 池成本（单条 145.6s），
+     属独立性能议题，本次刻意不与门禁混在一起处理。
+  4. dedup / portrait 改为只观测后，二者真实劣化不再自动告警（方向② 的已知代价）。
+

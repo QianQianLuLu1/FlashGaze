@@ -45,6 +45,7 @@ WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 EXTRAS_HEALTH_YML = WORKFLOWS_DIR / "extras-health.yml"
 BENCHMARK_YML = WORKFLOWS_DIR / "benchmark.yml"
 RELEASE_YML = WORKFLOWS_DIR / "release.yml"
+TOOLS_EXTRAS_HEALTH = REPO_ROOT / "tools" / "extras_health.py"
 
 # rhysd/github-action-benchmark 没有这两个入参（该 action 唯一的 required 入参是
 # output-file-path）。写了不会报错、只会被静默忽略，所以必须由契约测试钉住。
@@ -67,6 +68,15 @@ PER_MODULE_FLOORS: dict[str, int] = {
     "flashgaze/webui/app.py": 80,
     "flashgaze/core/xlsx_exporter.py": 95,
 }
+
+# extras job 的超时预算下限：按 CI run 40107357212 的实测取（ubuntu 全程 11m23s；macOS 在
+# 20 分钟被 runner 杀掉时 pytest 进度只到 58%，同一 628 条用例子集 ubuntu 97s vs macOS 824s
+# = 8.5 倍，外推整 job ≈31 分钟）。改小必须重新拿实测数据，不许为了「让它别超时」调小。
+EXTRAS_JOB_TIMEOUT_MINUTES = 40
+
+# 该实测结论所在的 CI run，注释里必须留这个引用（本仓库惯例：门禁数字与取证 run 绑定，
+# 见 ci.yml / extras-health.yml 内的 run 40031692874、run 39986414762 等引用）。
+EXTRAS_TIMEOUT_EVIDENCE_RUN = "40107357212"
 
 # extras 总下限覆盖的模块清单（--include 逗号列表，防止 --cov=flashgaze 全包
 # 数据稀释总下限信号）。
@@ -556,6 +566,162 @@ def test_no_workflow_writes_github_output_inside_quoted_heredoc() -> None:
     )
     assert not _github_output_offenders("fixed.yml", fixed), (
         "os.environ 写法被误判——守卫会拦住正确修复"
+    )
+
+
+# ── tools/extras_health.py 判定集 ↔ ci.yml 逐模块 floor（夜间治理口径对齐）────
+
+
+def _dotted(path: str) -> str:
+    """coverage 的 `--include` 路径 → 快照里的模块点号名。"""
+    assert path.startswith("flashgaze/") and path.endswith(".py"), f"路径形态不符合预期：{path}"
+    return "flashgaze." + path[len("flashgaze/") : -len(".py")].replace("/", ".")
+
+
+def _floored_modules(extras_job_text: str) -> set[str]:
+    """取 ci.yml extras job 里带 `--fail-under=` 的模块（总下限那行不带，故不会被误取）。"""
+    return {
+        _dotted(match.group(1))
+        for match in re.finditer(r'--include="([^"]+)" --fail-under=\d+', extras_job_text)
+    }
+
+
+def _judged_modules(tool_text: str) -> set[str]:
+    """取 tools/extras_health.py 源码里 JUDGED_MODULES 的成员（纯文本，不 import tools/）。
+
+    不 import 的理由与本文件其余用例一致：tools/ 不是包、也不在 mypy 的 files 范围内，
+    把契约测试挂在动态导入上会让「守卫本身失效」比「被守的东西失效」更难发现。
+    """
+    match = re.search(r"^JUDGED_MODULES = \((.*?)\n\)", tool_text, re.MULTILINE | re.DOTALL)
+    assert match is not None, (
+        "tools/extras_health.py 里找不到 JUDGED_MODULES 元组——判定集契约已被移除，"
+        "夜间 R1/R2/R4/R5 会退回「按 5 个模块的绝对线判死」"
+    )
+    members: set[str] = set()
+    for line in match.group(1).splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        members.add(stripped.strip(",").strip("\"'"))
+    assert members, "JUDGED_MODULES 解析为空——本契约的判据需复核（空集合会恒等于空 floor 表）"
+    return members
+
+
+def test_extras_health_judged_modules_match_ci_floors() -> None:
+    """R1/R2/R4/R5 的判定集必须逐字等于 ci.yml 里设了逐模块 floor 的模块集合。
+
+    回归实证（CI run 40134963461）：§2.1 接受 dedup/portrait 的**降级口径**数字而不给它们设
+    逐模块 floor，但 §4 的 R1/R4 按「任一模块」的绝对线判定——portrait 47.62% 于是直接判出
+    critical 并要往 main 写 `.github/extras-strict.lock`。方向② 把判定集限定为「有 floor 的
+    3 个模块」后，两处口径必须锁死在一起：将来给 dedup/portrait 补 floor 却忘了同步判定集
+    （或反过来），本用例立即判红。
+    """
+    judged = _judged_modules(_read_text(TOOLS_EXTRAS_HEALTH))
+    floored = _floored_modules(_job_section(_read_text(CI_YML), "  extras:", "  e2e:"))
+
+    assert judged == floored, (
+        f"判定集 {sorted(judged)} 与 ci.yml 逐模块 floor 集合 {sorted(floored)} 不一致；"
+        "要么补 floor 后同步 JUDGED_MODULES，要么删 floor 后把模块放回观测集，"
+        "并同步 docs/extras-governance.md §2.1/§4"
+    )
+
+    # 反例 1：把观测模块塞进判定集（portrait 47.62% 会立刻重新判死）→ 必须被拦下。
+    widened = (
+        'JUDGED_MODULES = (\n    "flashgaze.mcp_server",\n    "flashgaze.core.portrait_engine",\n)'
+    )
+    assert _judged_modules(widened) != floored, "判定集放宽后仍视为一致——守卫形同虚设"
+
+    # 反例 2：ci.yml 删掉 xlsx 的 floor 行 → 两个集合应立刻不等。
+    shrunk_ci = "\n".join(
+        ln
+        for ln in _job_section(_read_text(CI_YML), "  extras:", "  e2e:").splitlines()
+        if 'xlsx_exporter.py" --fail-under' not in ln
+    )
+    assert _floored_modules(shrunk_ci) != judged, (
+        "删掉一条逐模块 floor 后守卫仍放行——判定集会静默脱离 floor 表"
+    )
+
+
+# ── extras-health.yml 的退出码管道 ────────────────────────────────────────
+
+_RC2_GUARD_RE = re.compile(r'\[\s*"\$rc"\s*-ne\s+0\s*\]\s*&&\s*\[\s*"\$rc"\s*-ne\s+2\s*\]')
+
+
+def _step_block(text: str, marker: str) -> str:
+    """按 step 标记切出该步骤的文本（到下一个 `- name:` 为止）。"""
+    lines = text.splitlines()
+    start = next(i for i, ln in enumerate(lines) if marker in ln)
+    end = next(
+        (
+            i
+            for i, ln in enumerate(lines[start + 1 :], start + 1)
+            if ln.strip().startswith("- name:")
+        ),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def _tolerates_critical_only(block: str) -> bool:
+    """步骤是否「只把 rc=2 当 critical 放行，其它非零码仍按失败退出」。"""
+    if "continue-on-error" in block:
+        return False  # 步级开关会连崩溃一起吞掉，那是第二个橡皮图章
+    return "|| rc=$?" in block and _RC2_GUARD_RE.search(block) is not None
+
+
+def test_extras_health_step_tolerates_critical_exit_code() -> None:
+    """Evaluate health 步骤必须容忍 tools/extras_health.py 的 critical 退出码 2。
+
+    回归实证（CI run 40134963461）：脚本按对外契约用 rc=2 表达 critical，runner 默认
+    `bash -e {0}` 于是把步骤直接判红；写锁 / 建 Issue / 关 Issue 三处步骤都没有
+    `if: always()`，整批 skipped——`dcf8c59` 刚把 heredoc 的 $GITHUB_OUTPUT 修通、
+    R4 熔断链路仍被自己的退出码第二次掐断，且 nightly 每夜必红。
+    """
+    block = _step_block(_read_text(EXTRAS_HEALTH_YML), "- name: Evaluate health")
+    assert _tolerates_critical_only(block), (
+        "Evaluate health 未「只放行 rc=2」：既不能把 critical 当崩溃（熔断步骤会被跳过），"
+        "也不能无条件 || true / continue-on-error（真崩溃就不红了）；"
+        '需要 `|| rc=$?` 与 `[ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]` 两段'
+    )
+
+    # 反例 1：把守护条件写成「rc 不等于 0 就失败」→ 应判红（回到 CI run 40134963461 的状态）。
+    fatal_any = 'python x || rc=$?\nif [ "$rc" -ne 0 ]; then exit "$rc"; fi'
+    assert not _tolerates_critical_only(fatal_any), "rc=2 被当崩溃时守卫仍放行——假绿"
+
+    # 反例 2：无条件 || true（崩溃也被吞掉）→ 同样必须判红。
+    swallow = "python x || true"
+    assert not _tolerates_critical_only(swallow), "|| true 吞掉崩溃时守卫仍放行——假绿"
+
+    # 反例 3：改回步级 continue-on-error → 判红。
+    coe = _step_block(_read_text(EXTRAS_HEALTH_YML), "- name: Run extras tests with coverage")
+    assert "continue-on-error" in coe, (
+        "采集步骤的 continue-on-error: true 丢失——本用例的反例 3 依赖它作为对照存在"
+    )
+    assert not _tolerates_critical_only(coe), "带 continue-on-error 的步骤不该被认作已兜住 rc"
+
+
+def test_ci_extras_job_timeout_covers_measured_macos_leg() -> None:
+    """extras job 的超时预算不得低于实测需求（原 20 分钟会在 58% 进度处杀掉 macOS 腿）。
+
+    回归实证（CI run 40107357212）：`extras (macos-latest, py3.12)` 全程 20m28s、被 runner
+    在 20 分钟上限处取消，随后 `if: always()` 的 Coverage gate 报「无覆盖率数据」——看着像
+    门禁失败，其实是超时派生红。同 628 条用例子集 ubuntu 97s vs macOS 824s（8.5 倍），
+    外推整 job ≈31 分钟。
+    """
+    extras_job = _job_section(_read_text(CI_YML), "  extras:", "  e2e:")
+    match = re.search(r"^    timeout-minutes:\s*(\d+)", extras_job, re.MULTILINE)
+    assert match is not None, (
+        "extras job 缺少 timeout-minutes：无上限会让卡死的腿长期占用 macOS runner"
+    )
+    value = int(match.group(1))
+    assert value >= EXTRAS_JOB_TIMEOUT_MINUTES, (
+        f"extras job timeout-minutes={value} 低于实测需求 {EXTRAS_JOB_TIMEOUT_MINUTES}；"
+        "调小前须重新取证（macOS 腿需 ~31 分钟），不得为了「让它别超时」而回退"
+    )
+    # 门禁数字必须与取证 run 绑定（本仓库惯例），防止注释被删后数字失去出处。
+    assert EXTRAS_TIMEOUT_EVIDENCE_RUN in extras_job, (
+        f"extras job 注释缺少 CI run {EXTRAS_TIMEOUT_EVIDENCE_RUN} 引用："
+        "timeout 数值会重新变成无出处的自选数字"
     )
 
 

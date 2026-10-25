@@ -168,3 +168,41 @@ Neumaier 补偿求和，3.10/3.11 仍是朴素左折叠；叠加两次归一化�
 - **复现要点**：本地 Windows 装不上 dlib/face_recognition，无法原样复现；
   `tests/test_portrait_import_guard.py` 用子进程在 `PYTHONPATH` 前置一个「import 即
   `raise SystemExit`」的假包复现，既确定性又不污染 `tests/test_portrait.py` 的双向 skipif。
+- **订正（2026-10-25，兜住 `SystemExit` ≠ stdout 洁净）**：上条「后果（产品）」写的是一句
+  「stdout 只有那句 pip 提示、没有任何 JSON」。这只在**没兜住** SystemExit 时成立；`dcf8c59`
+  把守卫改成 `except (ImportError, SystemExit)` 之后，进程活了、退出码仍是 0、JSON 也完整，
+  但那句 `print()` 留在 stdout 的**头部**——形态变成「提示 + JSON」而不是「只有提示」。
+  CI run 40107357212 的 extras 腿第一次真跑到收集之后的阶段，就暴露出 4 条用例集体报
+  `JSONDecodeError: Expecting value: line 1 column 1 (char 0)`（`TestStreamingPopen` 三条 +
+  `test_cli_e2e_10_runs_identical_json`）：它们是唯一「子进程跑 CLI + 严格 `json.loads(stdout)`」
+  的组合，而 `TestPtyTerminal` 用容错 `_extract_json` 反而全绿，`tests/test_cli_e2e.py` 因
+  `pytestmark = e2e` 被默认口径全程去选——三条旁证合起来才把范围收到这一条链上。
+  关键是 `portrait_engine` 由 `hybrid_scorer` 模块级导入，所以 **CLI 每次启动都会执行探测块**。
+- **正确写法（补）**：探测块不仅要兜异常，还要 `contextlib.redirect_stdout/redirect_stderr`
+  把第三方 import 期的打印整段吞掉。不要改成投给 logger：`set_verbose` 在
+  `flashgaze/cli/entry.py:58` 才生效、晚于模块级探测，而 WARNING 级默认输出又会在
+  `--json 2>&1` 合流时重新污染 JSON。`dcf8c59` 新增的守卫用例当时还把「提示出现在 stdout」
+  写成断言（`UPSTREAM_HINT in result.stdout`），等于把污染钉住——非空洞性凭证因此改成
+  独立落盘的哨兵文件，断言方向翻为 `not in stdout`。
+
+## 3.12 脚本用退出码表达级别，步骤把非零一律当失败 ⇒ 自愈链路自我断电
+
+- **事实**：`tools/extras_health.py` 的 `main()` 用 `return 2`（critical）/`return 0`（其余）
+  向调用方表达判定级别，docstring 还写着「不影响非阻塞语义」。而 `.github/workflows/
+  extras-health.yml` 的 `Evaluate health` 步骤没有任何 rc 处理，runner 默认 `bash -e {0}`
+  于是把 rc=2 直接判成步骤失败。
+- **后果**：该步骤失败后，`Publish sentinel state` / `Create or update cleanup Issue` /
+  `Close resolved Issue` 三处（都没有 `if: always()`）整批 `skipped`——即 `dcf8c59` 刚修通的
+  `$GITHUB_OUTPUT` heredoc 输出**一次也没被消费过**，R4 熔断仍是不接线的状态；同时 nightly
+  每天一条红。核实方法：`.github/extras-strict.lock` 在 main 上 404，而 decision.json 的
+  `actions.write_lock` 已是 `true`。
+- **一般化**：凡「脚本用非零退出码表达语义而非表达失败」的地方，调用方必须逐值放行
+  （只容忍 2，其它非零原样退出），否则同一份契约会把下游动作掐死。反方向也一样糟：写成
+  无条件 `|| true` 或步级 `continue-on-error` 会让真崩溃（traceback → rc 1）变绿，
+  那是第二个橡皮图章。由 `tests/test_coverage_gate_contract.py::
+  test_extras_health_step_tolerates_critical_exit_code` 三向钉住（缺容忍、过度容忍、
+  步级开关都判红）。
+- **同源教训**：与 §3.11 的「配了但没接线」、AGENTS.md §4.1（`continue-on-error` 静默放行）、
+  §4.9（action 入参名只在真跑时暴露）是同一族缺陷的不同表现形式：**契约的一侧写了、
+  另一侧没消费，且双方都恒绿**。
+
