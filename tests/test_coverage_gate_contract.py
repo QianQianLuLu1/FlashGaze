@@ -74,9 +74,17 @@ PER_MODULE_FLOORS: dict[str, int] = {
     "flashgaze/core/xlsx_exporter.py": 95,
 }
 
-# extras job 的超时预算下限：按 CI run 40107357212 的实测取（ubuntu 全程 11m23s；macOS 在
-# 20 分钟被 runner 杀掉时 pytest 进度只到 58%，同一 628 条用例子集 ubuntu 97s vs macOS 824s
-# = 8.5 倍，外推整 job ≈31 分钟）。改小必须重新拿实测数据，不许为了「让它别超时」调小。
+# extras job 的超时预算下限。**40 不是实测需求，是刻意留的余量天花板**——历史两轮把这两个
+# 概念混用过，代价是注释一直在替一个被证伪的数字辩护：
+#   - run 40107357212：macOS 腿在 20 分钟上限被杀、进度 58%，据「同 628 条子集 ubuntu 97s
+#     vs macOS 824s = 8.5 倍」线性外推整 job ≈31 分钟。
+#   - run 40174423841（证伪）：抬到 40 后测试步独自跑到 2091s **仍未结束**，外推作废——
+#     58% 停点非线性，后半程是真进程池用例，成本 = 池数 × worker 数 × worker 冷启动 import。
+#   - run 40183752144（按需导入落地后的实测）：macOS 全程 661s / 测试步 380s，
+#     ubuntu 全程 568s / 测试步 302s——macOS/ubuntu 由 ≥6.9 倍回落到 1.26 倍，落进默认矩阵
+#     1.46 倍的自然带内，平台异常消失。真实需求只有 ~11 分钟。
+# 所以 40 是给 extras 用例集合继续增长留的空间，不是欠账；改小必须重新取证，也不许为了
+# 「让它别超时」只调预算不修根因（那正是 40174423841 那轮的做法，且它仍然红了）。
 EXTRAS_JOB_TIMEOUT_MINUTES = 40
 
 # 该实测结论所在的 CI run，注释里必须留这个引用（本仓库惯例：门禁数字与取证 run 绑定，
@@ -87,6 +95,10 @@ EXTRAS_TIMEOUT_EVIDENCE_RUN = "40107357212"
 # 58% 停点非线性（后半程集中真进程池用例，成本 = 池数 × worker 数 × worker 冷启动 import）。
 # 该 run 号也必须留在注释里：删掉它，那条被推翻的外推就会重新被当成依据（CI run 40174423841）。
 EXTRAS_TIMEOUT_FALSIFIED_RUN = "40174423841"
+
+# 修复落地后的实测 run（macOS 全程 661s、测试步 380s）。三个 run 号必须同时挂在 extras job
+# 的注释里：只留「预算 40」而无实测出处，就是 40174423841 那一轮犯过的错。
+EXTRAS_TIMEOUT_MEASURED_RUN = "40183752144"
 
 # extras 总下限覆盖的模块清单（--include 逗号列表，防止 --cov=flashgaze 全包
 # 数据稀释总下限信号）。
@@ -711,7 +723,10 @@ def test_extras_health_step_tolerates_critical_exit_code() -> None:
 
 
 def test_ci_extras_job_timeout_covers_measured_macos_leg() -> None:
-    """extras job 的超时预算不得低于实测需求（原 20 分钟会在 58% 进度处杀掉 macOS 腿）。
+    """extras job 的超时预算不得低于 40 分钟——但 40 是**余量天花板**，不是实测需求。
+
+    实测需求由 run 40183752144 给出（macOS 全程 661s / 测试步 380s），前置两轮都只拿到下界：
+    原 20 分钟会在 58% 进度处杀掉 macOS 腿。
 
     回归实证（CI run 40107357212）：`extras (macos-latest, py3.12)` 全程 20m28s、被 runner
     在 20 分钟上限处取消，随后 `if: always()` 的 Coverage gate 报「无覆盖率数据」——看着像
@@ -719,8 +734,8 @@ def test_ci_extras_job_timeout_covers_measured_macos_leg() -> None:
     当时按线性外推得整 job ≈31 分钟。
 
     该外推已被 CI run 40174423841 证伪：抬到 40 后同一腿的测试步独自跑到 2091s 仍未结束。
-    本用例因此只锁「不得低于已观测下界」，不再宣称 40 就是实测需求——真正的修法是消掉
-    worker 冷导入（见 test_hybrid_scorer_keeps_heavy_optional_hosts_out_of_module_level）。
+    本用例因此既不宣称 40 等于需求、也不许把「再抬预算」当成修法——真正的修法在
+    test_hybrid_scorer_keeps_heavy_optional_hosts_out_of_module_level 那一侧。
     """
     extras_job = _job_section(_read_text(CI_YML), "  extras:", "  e2e:")
     match = re.search(r"^    timeout-minutes:\s*(\d+)", extras_job, re.MULTILINE)
@@ -729,8 +744,9 @@ def test_ci_extras_job_timeout_covers_measured_macos_leg() -> None:
     )
     value = int(match.group(1))
     assert value >= EXTRAS_JOB_TIMEOUT_MINUTES, (
-        f"extras job timeout-minutes={value} 低于实测需求 {EXTRAS_JOB_TIMEOUT_MINUTES}；"
-        "调小前须重新取证（macOS 腿需 ~31 分钟），不得为了「让它别超时」而回退"
+        f"extras job timeout-minutes={value} 低于既定余量下限 {EXTRAS_JOB_TIMEOUT_MINUTES} 分钟；"
+        "实测需求是 11 分钟量级（run 40183752144），40 是给 extras 用例集合增长留的天花板，"
+        "调小前须重新取证，不得为了「让它别看板上红」而回退"
     )
     # 门禁数字必须与取证 run 绑定（本仓库惯例），防止注释被删后数字失去出处。
     assert EXTRAS_TIMEOUT_EVIDENCE_RUN in extras_job, (
@@ -742,6 +758,12 @@ def test_ci_extras_job_timeout_covers_measured_macos_leg() -> None:
     assert EXTRAS_TIMEOUT_FALSIFIED_RUN in extras_job, (
         f"extras job 注释缺少证伪 run {EXTRAS_TIMEOUT_FALSIFIED_RUN} 引用："
         "被实测推翻的外推会重新被当成依据"
+    )
+    # 三个 run 号齐了才讲得清这个数字的来历：起点、证伪、实测。缺实测那一个，注释就退回到
+    # 「40 是实测需求」这句被自己推翻的话上，下一个人会以为没有下调空间。
+    assert EXTRAS_TIMEOUT_MEASURED_RUN in extras_job, (
+        f"extras job 注释缺少实测 run {EXTRAS_TIMEOUT_MEASURED_RUN} 引用："
+        "40 分钟会重新被误读成实测需求，而不是余量天花板"
     )
 
 
