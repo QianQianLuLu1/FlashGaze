@@ -80,12 +80,13 @@ PER_MODULE_FLOORS: dict[str, int] = {
 #     vs macOS 824s = 8.5 倍」线性外推整 job ≈31 分钟。
 #   - run 40174423841（证伪）：抬到 40 后测试步独自跑到 2091s **仍未结束**，外推作废——
 #     58% 停点非线性，后半程是真进程池用例，成本 = 池数 × worker 数 × worker 冷启动 import。
-#   - run 40183752144 / 40186485850（按需导入落地后的两轮实测）：macOS 测试步 380s / 375s、
-#     job 全程 661s / 681s，两轮都正常跑完；ubuntu 测试步 302s / 382s——与修复前的 306s / 404s
-#     同在一个 ±30% 区间，**无可测变化**。这不是遗漏而是机理证据：Linux 默认 fork、worker 不
-#     重新导入本模块，这笔 import 税只在 spawn 平台（macOS/Windows）存在。所以有效对照只有一组：
-#     macOS 由「≥2091s 未完」变成 ~377s 完成，macOS/ubuntu 由 ≥5.2 倍回到 ~1 倍量级。
-#     真实需求因此只有 ~11 分钟。
+#   - run 40183752144 / 40186485850 / 40189037679（按需导入落地后的三轮实测）：macOS 测试步
+#     380 / 375 / 505s、job 全程 661 / 681 / 882s，三轮全部正常跑完；ubuntu 测试步
+#     302 / 382 / 384s——与修复前的 306s / 404s 同在一个区间，**无可测变化**。这不是遗漏而是
+#     机理证据：Linux 默认 fork、worker 不重新导入本模块，这笔 import 税只在 spawn 平台
+#     （macOS/Windows）存在。所以有效对照只有一组：macOS 由「≥881s 未完」「≥2091s 未完」两轮
+#     被杀，变成三轮全部完成、最差 882s（14.7 分钟）；macOS/ubuntu = 0.98~1.31 倍，
+#     与默认矩阵的 1.46 倍同带。三轮自身 ±35% 波动，因此不报单点值、只报区间。
 # 所以 40 是给 extras 用例集合继续增长留的空间，不是欠账；改小必须重新取证，也不许为了
 # 「让它别超时」只调预算不修根因（那正是 40174423841 那轮的做法，且它仍然红了）。
 EXTRAS_JOB_TIMEOUT_MINUTES = 40
@@ -99,8 +100,8 @@ EXTRAS_TIMEOUT_EVIDENCE_RUN = "40107357212"
 # 该 run 号也必须留在注释里：删掉它，那条被推翻的外推就会重新被当成依据（CI run 40174423841）。
 EXTRAS_TIMEOUT_FALSIFIED_RUN = "40174423841"
 
-# 修复落地后的实测 run（macOS 全程 661s、测试步 380s）。三个 run 号必须同时挂在 extras job
-# 的注释里：只留「预算 40」而无实测出处，就是 40174423841 那一轮犯过的错。
+# 修复落地后的实测 run（macOS job 全程 661~882s，三轮里最差那轮）。三个 run 号必须同时挂在
+# extras job 的注释里：只留「预算 40」而无实测出处，就是 40174423841 那一轮犯过的错。
 EXTRAS_TIMEOUT_MEASURED_RUN = "40183752144"
 
 # extras 总下限覆盖的模块清单（--include 逗号列表，防止 --cov=flashgaze 全包
@@ -728,7 +729,8 @@ def test_extras_health_step_tolerates_critical_exit_code() -> None:
 def test_ci_extras_job_timeout_covers_measured_macos_leg() -> None:
     """extras job 的超时预算不得低于 40 分钟——但 40 是**余量天花板**，不是实测需求。
 
-    实测需求由 run 40183752144 给出（macOS 全程 661s / 测试步 380s），前置两轮都只拿到下界：
+    实测需求由 run 40183752144 / 40186485850 / 40189037679 三轮给出（macOS job 661~882s、
+    测试步 375~505s，三轮全部跑完），前置两轮都只拿到下界：
     原 20 分钟会在 58% 进度处杀掉 macOS 腿。
 
     回归实证（CI run 40107357212）：`extras (macos-latest, py3.12)` 全程 20m28s、被 runner
@@ -748,7 +750,7 @@ def test_ci_extras_job_timeout_covers_measured_macos_leg() -> None:
     value = int(match.group(1))
     assert value >= EXTRAS_JOB_TIMEOUT_MINUTES, (
         f"extras job timeout-minutes={value} 低于既定余量下限 {EXTRAS_JOB_TIMEOUT_MINUTES} 分钟；"
-        "实测需求是 11 分钟量级（run 40183752144），40 是给 extras 用例集合增长留的天花板，"
+        "实测需求是 ≤15 分钟量级（三轮 661~882s），40 是给 extras 用例集合增长留的天花板，"
         "调小前须重新取证，不得为了「让它别看板上红」而回退"
     )
     # 门禁数字必须与取证 run 绑定（本仓库惯例），防止注释被删后数字失去出处。
