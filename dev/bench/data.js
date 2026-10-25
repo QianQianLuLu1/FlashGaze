@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792925537555,
+  "lastUpdate": 1792927773008,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -712,6 +712,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001977228615598679",
             "extra": "mean: 630.0702000004321 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "874d4cea4b54c08e7a93959853e66c3d71526435",
+          "message": "docs(ci): 订正「ubuntu 也顺带变快」的过度归因，补 fork/spawn 边界与第二轮实测\n\n第二个终验 run 40186485850 同样全绿（macOS 测试步 375s / job 681s），但它的 ubuntu 测试步是\n382s，而不是上一轮的 302s。四个样本摆齐：ubuntu 修复前 306s / 404s、修复后 302s / 382s，\n同一个 ±30% 区间——上一版把它写成「ubuntu 也从 404s 顺带降到 302s」，是把跨运行噪声当成了\n因果，而且机制上根本不成立：ProcessPoolExecutor 未指定 mp_context，Linux 默认 fork、worker\n直接继承父进程已导入的模块、**不重新 import**，那笔税只在 spawn 平台（macOS/Windows）存在。\n\n所以有效对照只有一组：macOS 由「881s 未完」「2091s 未完」两轮被杀，变成 380s / 375s 两轮正常\n完成；macOS/ubuntu 由 ≥5.2 倍回到 ~1 倍量级（不再报精确的 1.26 倍，那取决于撞上哪一批 ubuntu\n样本）。这反而让根因结论更硬：受影响面与 spawn 语义完全重合。\n\n顺带记下可推论的边界（尚未实施）：给 extras 加 Windows 腿会立刻重新暴露这笔税，加 Linux 腿\n不会——这解释了 extras 矩阵历史上为什么只有 ubuntu + macOS 两条腿。\n\ntimeout-minutes: 40 的定性不变（余量天花板，非实测需求），三个 run 号的契约要求不变。\n纯文案订正，无行为改动；全量 1058 passed / 29 skipped、覆盖率 90.49% 与上一批逐字一致，\nruff / format / mypy 两面 / check_agents_md 全绿。",
+          "timestamp": "2026-10-25T19:25:51+08:00",
+          "tree_id": "0ac6c9cb83a395ddd1210dd41b30c2ac720c4ae6",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/874d4cea4b54c08e7a93959853e66c3d71526435"
+        },
+        "date": 1792927772735,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 12.19489208245969,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019946698613088794",
+            "extra": "mean: 82.00154566667568 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.278782633607323,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0015128327322984343",
+            "extra": "mean: 75.308108250006 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 209.78326897137566,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027486758400161442",
+            "extra": "mean: 4.766824375000311 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2388.275331177584,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015799947622215986",
+            "extra": "mean: 418.71219241163925 usec\nrounds: 1476"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.155548348945718,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0070091301726235835",
+            "extra": "mean: 45.13542090000158 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 44.514569333653114,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019054234230454251",
+            "extra": "mean: 22.46455519999826 msec\nrounds: 45"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 75.54877567370428,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0007701558006675791",
+            "extra": "mean: 13.236481876543007 msec\nrounds: 81"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1524.6663572722484,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003195103407824965",
+            "extra": "mean: 655.8811999951786 usec\nrounds: 10"
           }
         ]
       }
