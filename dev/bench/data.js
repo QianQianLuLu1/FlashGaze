@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792923134601,
+  "lastUpdate": 1792925537555,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -634,6 +634,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000008262276814941317",
             "extra": "mean: 471.69770000152766 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "1fb38576d9c0d1a6479aecc03ea89e923235f9d2",
+          "message": "test(ci): 把 extras 超时实测出处绑进契约，订正「40 分钟是实测需求」\n\nCI run 40183752144 @ 1c5e25a 全绿（21 个 job，0 失败），本轮修复的终验数据到手：\nextras (macos-latest, py3.12) 测试步 380s、job 全程 661s；ubuntu 302s / 568s。\nmacOS→ubuntu 由 ≥6.9 倍（2091s 未完对 404s 的下界比值）回落到 1.26 倍，落进默认矩阵\n1.46 倍的自然带内——平台异常消失，直接反证根因是 worker 冷启动的可选依赖 import，\n不是 macOS 慢。coverage-extras-macos-* 与 junit-extras-macos-* 首次真实生成（产物 26→28）。\nbenchmark job 同 SHA success，±15% 均值门禁未受影响。\n\n据此把 timeout-minutes: 40 重新定性为**刻意留的余量天花板（~3.6 倍 headroom），不是实测需求**：\n上一轮的注释把它写成「按实测取的」，而它依据的 31 分钟外推已被 40174423841 证伪——注释一直在替\n一个被推翻的数字辩护。**没有下调** 40：腿自己只要 11 分钟，下调省不了任何墙钟时间，却把未来的\n用例增长重新变成超时分母，是净风险零收益。\n\n契约新增 EXTRAS_TIMEOUT_MEASURED_RUN，要求「起点 40107357212 / 证伪 40174423841 / 实测\n40183752144」三个 run 号同时出现在 extras 注释里，缺任一判红——只剩「预算 40」而无实测出处，\n就是上一轮犯过的错。断言文案里「macOS 腿需 ~31 分钟」那句已删除。\n\n反例 E 第一版构造无效（只删 run 号的一处出现，它在三 run 清单里还有第二处，18 条照样全绿），\n改为删除全部出现后拿到 rc=1；教训记进 fixes.md §4.11：反例须先证明守卫看得见我改的字节。\nAGENTS.md §3.13/§4.10/§4.11/§7 与 pitfalls/fixes 同步实测数字；§4.10 那条「实需 ~31 分钟」\n补上「已被 §4.11 证伪」的指向，不留孤立的历史断言。\n\n本地验证：全量 1058 passed, 29 skipped（与上一批逐字一致）、覆盖率 90.49% ≥ 80；\nruff check / format --check / mypy 两面 / check_agents_md 全绿。",
+          "timestamp": "2026-10-25T18:48:15+08:00",
+          "tree_id": "31c2bb84423c78a3c785026cc37d9a00a9fc5c2a",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/1fb38576d9c0d1a6479aecc03ea89e923235f9d2"
+        },
+        "date": 1792925537047,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 8.907415680086771,
+            "unit": "iter/sec",
+            "range": "stddev: 0.010410883092199534",
+            "extra": "mean: 112.26600800000597 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 12.803333783263392,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002671829675405026",
+            "extra": "mean: 78.10465750000262 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 215.31376059483546,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000028752875911501",
+            "extra": "mean: 4.644384999998863 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2386.46863185298,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004391787150250777",
+            "extra": "mean: 419.0291825556271 usec\nrounds: 1479"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.351182535468325,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006855456295330076",
+            "extra": "mean: 44.74036209999781 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 46.32810750084115,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012377995025475888",
+            "extra": "mean: 21.585168355557016 msec\nrounds: 45"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 97.86597053079501,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010373368556317282",
+            "extra": "mean: 10.218056333333298 msec\nrounds: 93"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1587.1247362584584,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001977228615598679",
+            "extra": "mean: 630.0702000004321 usec\nrounds: 10"
           }
         ]
       }
