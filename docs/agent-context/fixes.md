@@ -403,13 +403,17 @@
     `ruff check` / `ruff format --check` / `mypy`（本机 + `--platform linux` 两面）/
     `tools.check_agents_md` 全绿，提交时 4 个 pre-commit hook 全过。
 - **CI 终验结果（run 40183752144 @ `1c5e25a`，结论 success，21 个 job 全绿）**：
-  - `extras (macos-latest, py3.12)`：**测试步 380s**、job 全程 **661s**（11m01s）；对比修复前的
-    「≥2091s 仍未结束、job 2428s 被杀」。`Coverage gate (hard floors)` 真实通过（1s）。
-  - `extras (ubuntu-latest, py3.12)`：测试步 302s、install 252s、job 全程 568s——ubuntu 侧也
-    从 404s 顺带降到 302s。
-  - **倍率回归自然带**：macOS→ubuntu 由 ≥6.9 倍（2091s 未完对 404s 的下界比值）回落到
-    **1.26 倍**，落进默认矩阵 1.46 倍的自然带内。平台异常消失，直接佐证根因定位正确：
-    从来不是「macOS 慢」，而是「装上 extras 之后每个 spawn worker 多付一遍 import」。
+  - `extras (macos-latest, py3.12)`：修复后连续两轮全绿——run 40183752144 测试步 **380s** /
+    job 全程 **661s**，run 40186485850 测试步 **375s** / job **681s**；对比修复前两轮
+    「881s 未完」与「2091s 未完」双双被 runner 杀掉。`Coverage gate (hard floors)` 真实通过（1s）。
+  - **ubuntu 侧无可测变化，且本来就不该有**（本条初稿写成「ubuntu 也从 404s 顺带降到 302s」，
+    是把跨运行噪声当成了因果，已订正）：四个样本 ubuntu 测试步依次为 306 / 404（修复前）、
+    302 / 382（修复后），同一个 ±30% 区间。机理正是 **Linux 默认 fork、worker 不重新导入本模块**，
+    那笔 import 税只在 spawn 平台（macOS/Windows）存在——所以「ubuntu 也变快」在机制上不成立，
+    而「macOS 从跑不完变成 375~380s 完成」才是本次修复的唯一有效对照。
+  - **倍率回归**：macOS→ubuntu 由 ≥5.2 倍（2091s 未完对 404s 的下界比值）回到 **~1 倍量级**
+    （380/302 = 1.26、375/382 = 0.98，两批 ubuntu 样本本身就在飘）。平台异常消失，佐证根因
+    定位正确：从来不是「macOS 慢」，而是「装上 extras 之后每个 spawn worker 多付一遍 import」。
   - `coverage-extras-macos-latest-py3.12` 与 `junit-extras-macos-latest-py3.12` **首次真实生成**
     （该 run 产物 26 → 28 条），macOS 侧可选模块覆盖率自此可比、可取证。
   - `benchmark` job（同 SHA）结论 **success**：±15% 均值回归门禁未被本次改动触发。
