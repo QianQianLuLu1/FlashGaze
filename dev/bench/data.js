@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1792914778353,
+  "lastUpdate": 1792923134601,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -556,6 +556,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000024242371736116176",
             "extra": "mean: 651.8323000008763 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "1c5e25a5bf63a34a1d8b174f2b53c53a9531e1db",
+          "message": "fix(ci): 按需导入可选依赖宿主模块，消掉 spawn worker 的重导入税\n\nextras (macos-latest, py3.12) 在 CI run 40174423841 撞上 timeout-minutes: 40——测试步独自\n跑到 2091s 仍未结束（同一命令 ubuntu 404s），上一轮据 58% 停点做的「~31 分钟」线性外推\n就此被证伪。差额不是 macOS 天生慢：默认矩阵同平台只差 1.46 倍，多出来的是每个 spawn worker\n按 module+qualname 重导入 hybrid_scorer 时连带重付的 imagededup / face_recognition /\nlitellm 的 import，成本乘在「池代数 × worker 数」上（一条 test_score_batch_is_deterministic\n就是 40 次 spawn）。默认矩阵不装这三个包，所以本地与 12 腿恒无此税、结构上看不见它。\n\n改为按需导入：类型引用走 TYPE_CHECKING，运行时导入进函数体；worker 侧人像构造收进\nenable_portrait 开关（关闭时的返回值与 PortraitEngine(enable=False).evaluate() 的早返回\n逐字段相同）；HybridScorer.__init__ 的两个装配构造保持无条件——deduplicator/portrait_engine\n的模块级探测与构造是 extras 覆盖率的真实来源，条件化会让数字静默下移。三个可选依赖的探测块\n一行未改，§3.11 的 SystemExit + redirect_stdout/stderr 守卫原样留在原位；探测时机随之从\nimport 期推迟到装配期，缺陷没有消失只是换了触发点，相关注释已同步订正。\n\ntimeout-minutes 与 82/80/95/50/80 全部阈值一条未改，未撤 macOS 腿、未缩小 extras 测试范围。\n\n新增 tests/test_worker_import_budget.py 4 条：假包经 PYTHONPATH 前置注入 + 独立落盘哨兵作\n判据（不用计时断言），含「直接 import 假包必然落哨兵」的非空洞性对照与「开启/装配时必须\n加载」的反向守卫，防止拿删功能换绿伪装成优化成功。契约 17→18 条（静态兜底只认第 0 列导入、\n函数体内缩进导入不误报；并把被证伪的 run 号绑进注释要求）。test_hybrid_scorer 加 1 条进程内\nenable_portrait=True 用例，堵住 branch=true 口径下新分支只剩子进程可达的 partial branch 缺口。\n\n本地验证：修复前 3 红 1 绿 / 修复后 4 绿；反例 A-D 逐条实跑判红并用备份还原（git diff 无残留）；\nruff check + format --check + mypy（本机与 --platform linux 两面）+ tools.check_agents_md 全绿；\npytest tests/ --cov = 1058 passed, 29 skipped（跳过数与基线一致）, 覆盖率 90.49% ≥ 80。\n仍只能 CI 终验：macOS 腿 40 分钟够不够、benchmark ±15% 门禁。",
+          "timestamp": "2026-10-25T18:08:29+08:00",
+          "tree_id": "e992f3b375fd0e0b64478ada8aed5dbf25a619b8",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/1c5e25a5bf63a34a1d8b174f2b53c53a9531e1db"
+        },
+        "date": 1792923134176,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 14.652513374192015,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006779027889861763",
+            "extra": "mean: 68.2476769999975 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.658385190495073,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0016575439157834214",
+            "extra": "mean: 73.21509724999586 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 227.78573699110288,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006609080196994144",
+            "extra": "mean: 4.390090499999388 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 3065.8512429092802,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008283418576055119",
+            "extra": "mean: 326.1736857953582 usec\nrounds: 1760"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.358109645436706,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00824908390369885",
+            "extra": "mean: 44.726500400005875 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 49.669914707549665,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002872923121281147",
+            "extra": "mean: 20.13291156000321 msec\nrounds: 50"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 107.05928799354182,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000203461178667504",
+            "extra": "mean: 9.340618817307318 msec\nrounds: 104"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 2120.0018571147607,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008262276814941317",
+            "extra": "mean: 471.69770000152766 usec\nrounds: 10"
           }
         ]
       }
