@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793197736327,
+  "lastUpdate": 1793197936498,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -1112,6 +1112,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000058168264524428786",
             "extra": "mean: 667.3094999996465 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "68c086b37dd5208f06bca1959a2e1d3ae81fa658",
+          "message": "docs(ci): 把 step 8 的判据按触发事件拆开，改掉我自己混用的 20s\n\npush f3b8187 后 run 40706255565 的 step 8 是 6s 而非我写的「20s 量级」。查下来是我把两个\n分支的口径混了：20s 属于含 bench_full 的 nightly，push 走 quick 集（8 通过 + 1 去选）。\n正确的同触发对照是同为 push 的修复前绿 run 40191369021，step 8 也是 6s——逐字相同才算\n基准真在跑。判据按触发事件分别取（push ≈6s / schedule ≈20s），否则下一轮会把一条绿 run\n读成可疑。\n\n同时记录 push 分支已终验通过（steps 10~13 由整批 skipped 变回 success，即\nbenchmark-head.json 真实产出），并如实标注 schedule 分支仍无第二样本：本机既无 gh 也无\nGITHUB_TOKEN，workflow_dispatch full=true 无法从这里触发，只能等下一轮 18:00 UTC 定时。",
+          "timestamp": "2026-10-28T22:28:44+08:00",
+          "tree_id": "2c2d1a7b8984f79de06c6a8aa592346ede94ba67",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/68c086b37dd5208f06bca1959a2e1d3ae81fa658"
+        },
+        "date": 1793197935903,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 12.26158888439826,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0021237071915786295",
+            "extra": "mean: 81.5554990000038 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.533501168822587,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0017451626409520405",
+            "extra": "mean: 73.89070924999963 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 209.56371794014026,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000019054124036476512",
+            "extra": "mean: 4.771818374999626 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2393.576828993387,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001799400162533183",
+            "extra": "mean: 417.78479298721635 usec\nrounds: 1483"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.65624088086182,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006952920729704114",
+            "extra": "mean: 44.13794880000239 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 46.14128204133349,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00021147594387782792",
+            "extra": "mean: 21.672566425531855 msec\nrounds: 47"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 97.85815279195897,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009099750932647028",
+            "extra": "mean: 10.218872638296624 msec\nrounds: 94"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1541.2027453731748,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001679858152630289",
+            "extra": "mean: 648.8439000008839 usec\nrounds: 10"
           }
         ]
       }
