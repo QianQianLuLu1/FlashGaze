@@ -487,10 +487,19 @@
   gh-pages 重试推送）**全部 success**；`weekly-report` 因非周一 skipped；R4 的 sentinel / 建
   Issue / 关 Issue 三处 skipped 是 `JUDGED_MODULES` 收敛后判定为 ok 的**期望行为**，
   即 §4.10 设计的自愈链路自此可用。
-- **仍然只能由 CI 终验**：push 到 `main` 触发 `benchmark.yml` 的 `on.push`（同一条 step 8、
-  同一 resolver）后，必须看到 success **且 step 8 时长回到 20s 量级**——1s 意味着基准根本没跑，
-  即便 rc=0 也不算通过；再 `workflow_dispatch full=true` 复现 nightly 那条 `MARKER_ARGS=()`
-  分支；下一轮 18:00 UTC nightly 作第二样本（§4.11 的「别拿单样本当结论」对本条同样适用）。
+- **CI 终验（push 分支已通过，run 40706255565）**：push `f3b8187` 触发 `benchmark.yml` 的
+  `on.push` → job `benchmark (ubuntu, py3.12)` **success**，step 8 **6s**。
+  - **对照口径本轮差点写错，按实测订正**：判据原先写成「step 8 时长回到 20s 量级」，
+    但 **20s 是含 `bench_full` 的 nightly 分支口径**，push 走的是 quick 集（8 条通过 + 1 条去选）。
+    正确的同触发对照是同为 push 触发的**修复前绿** run **40191369021**，其 step 8 也是
+    **6s**，与修复后逐字相同——这才证明基准真在跑，而不是 1s 的死会话。
+    判据必须按触发事件分别取：**push ≈6s、schedule/full ≈20s**，二者不可互相冒充。
+  - steps 10~13（gh-pages 趋势链路）由修复前的整批 skipped 变回 **success**，
+    即 `benchmark-head.json` 真实产出（`rhysd/github-action-benchmark` 拿不到文件会直接失败）。
+- **尚未取得第二样本的分支（如实标注）**：`schedule`（nightly，`MARKER_ARGS=()` 含
+  `bench_full`）——本机既无 `gh` 也无 `GITHUB_TOKEN`，`workflow_dispatch full=true`
+  **无法从这里触发**，只能等下一轮 18:00 UTC 定时；那一轮 step 8 应回到 20s 量级。
+  §4.11 的「别拿单样本当结论」对本条同样适用，push 一轮绿不足以宣告 nightly 分支已修好。
 - **推论（尚未做）**：`pytest-cov>=4.1.0,<8` 仍浮动，是同族残留风险，本轮不扩大改动面；
   解钉那一轮须一并覆盖 9.2.0 的三个真实 breaking（#14716 / #8593 / #993）与四条 Python 腿。
 
