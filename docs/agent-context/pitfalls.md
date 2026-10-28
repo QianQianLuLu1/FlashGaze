@@ -255,3 +255,53 @@ Neumaier 补偿求和，3.10/3.11 仍是朴素左折叠；叠加两次归一化�
   `redirect_stdout/stderr` 必须原样留在模块级探测块内。`tests/test_portrait_import_guard.py`
   测的是守卫本身，与探测发生在哪一期无关，仍有效。
 
+## 3.14 浮动的测试引擎 = 无人改代码也会红的定时炸弹（pytest 9.2.0 删私有 `_nodeid`）
+
+- **事实**：`requirements-dev.txt` 一度把测试引擎写成区间式 `pytest>=7.4.0,<10`。区间式意味着
+  **每一轮 CI 都由 resolver 重新决定用哪个 pytest**，上游发版即等价于本仓改了一次引擎。
+  pytest 9.2.0 于 **2026-10-27T21:30:19Z** 上 PyPI，其 changelog 的 PR **#14758**（`NodeId`
+  dataclass 重构，条目落在「Miscellaneous internal changes」）删掉了**私有** `_nodeid`——
+  逐字比对 `src/_pytest/nodes.py`：9.1.1 命中 5 处（`__slots__`、两处赋值、两处读取），
+  **9.2.0 命中 0 处**；该条目明文只保证**公开** `nodeid` 对插件兼容。而
+  `pytest_benchmark/fixture.py:88` 至今仍是 `self.fullname = node._nodeid`，上游 issue **#321**
+  未关、修复 PR **#323** 未进任何 release（PyPI 最新仍是 5.3.0，2026-08-23）。
+- **后果**：`benchmark` fixture 一构造就抛 `AttributeError`，9 条基准用例全部在 **setup 阶段**
+  报错 → 会话 1 秒结束、退出码 1。nightly `Benchmark`（cron 18:00 UTC）run **40590781626**
+  因此判红，而**同一个 sha `2d94e08` 的前两轮 nightly（40231287598、40412247335）都是绿的**，
+  step 8 各 20s——仓内代码一行没变，红完全来自引擎换代。
+- **退出码本身有鉴别力**：9.2.0 的 #993 把「插件导入失败」判 4、「收集失败」判 2，
+  所以观测到的 rc=1 恰好排除这两类，唯一指向 per-test 错误。一次性 venv 单变量复核
+  （同 venv、同插件版本，只换 pytest）：`9.2.0 + 5.3.0` → `ERROR AttributeError: 'Function'
+  object has no attribute '_nodeid'`、rc=1；`9.1.1 + 5.3.0` → 1 passed、rc=0。
+- **为什么默认矩阵与开发机都看不见**：`tests/` 从不使用 `benchmark` fixture，基准只在
+  `benchmark.yml` 的 step 8 里跑。这条路径**只有 nightly 会天天走**，所以红灯有最长 24 小时的
+  发现延迟。**定向证据**：extras-health run 40598565970 同晚 22:56 装的正是 9.2.0、
+  跑 `pytest tests/` 全绿——所以本条**不是**「9.2.0 有毒」，钉版只针对基准路径，
+  文档与注释都不许把它写成通用判定。
+- **取证通道的老限制（本轮再次撞上）**：Actions 的 job logs 免鉴权 403、artifact zip 401，
+  「那轮到底装了哪个 pytest」**从未被日志直接观测**。结论靠四路独立证据拼出：PyPI 发布时间戳、
+  两个 tag 的源码逐字比对、退出码语义、一次性 venv 复现。另有一处反信号须如实记账：
+  失败那轮 step 4「Install dependencies」9s、绿的两轮 16s（装了新 wheel 本该更慢），
+  在 runner 噪声范围内但方向相反——这正是「复现步骤不可省略」的理由，不是「结论不成立」的理由。
+- **修法与口径**：`pytest==9.1.1` + `pytest-benchmark==5.3.0`（后者同属测量引擎：`fullname`
+  是 `--benchmark-compare` ±15% 门禁与 gh-pages 趋势序列的 **join key**，插件换代改的是对比键本身，
+  失配是静默的、日志无痕；且实测开发机 5.2.3 / CI 5.3.0 已经不同源）。阈值、矩阵、超时预算
+  一条未动，也**没有**用 `continue-on-error` 或删基准腿来让红灯消失。
+- **一般化**：
+  1. 「钉死单版本」这条守卫**只查 `==` 是不够的**：dependabot 的 monthly pip 配了
+     `ignore semver-major`，于是 `9.1.1 → 9.2.0` 会以 **minor** 的身份提 PR，而
+     `pytest==9.2.0` 完全满足「已钉版」。必须有 `PYTEST_BENCHMARK_INCOMPATIBLE` 这类
+     **已知不兼容版本集合**，让守卫对「钉在坏版本上」也判红——这是
+     `test_pytest_engine_is_pinned_out_of_known_bad_combination` 不是既有钉版用例复制品的凭证。
+  2. 钉版注释必须自带出处（run 号 + 上游 issue 号入契约，删掉即判红）。只留版本号不留因果链的
+     钉版，下一轮一定会被当成「没有来由的保守」改回区间式。
+  3. 解钉那一轮的验证面比想象大：9.2.0 还带着三个**真实** breaking（#14716 `-c` 路径、
+     #8593 `parametrize` 的 `indirect`/`ids`/`scope` 关键字化、#993 插件导入退出码），
+     本仓从未在 9.2.0 下全量验证过。抬钉必须同时覆盖四条 Python 腿与 `benchmarks/`，
+     否则只是把这一轮红灯换成一轮多腿红灯。
+  4. 逃生阀已评估并**否决**：在 `benchmarks/conftest.py` 给 `Node` 补一个 `_nodeid` property
+     shim（3 行、技术上可行）等于在私有 API 上再套一层私有 API，会掩掉后续所有上游不兼容，
+     让下一次换代连报错都不出。**不采纳**，仅作记录。
+  5. 残留的不对称：`pytest-cov>=4.1.0,<8` 仍浮动（本轮不扩大改动面），见 §3.7 / §3.8 同族口径。
+
+

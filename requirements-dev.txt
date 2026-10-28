@@ -1,4 +1,23 @@
-pytest>=7.4.0,<10
+# 测试引擎钉死单版本（与 coverage / ruff / mypy 同口径）：区间式 pytest>=7.4.0,<10
+# 让 resolver 每轮 CI 自动吃最新版，红灯一现就无法归因。本轮实证：pytest 9.2.0 于
+# 2026-10-27T21:30:19Z 上 PyPI，25 分钟后 nightly benchmark.yml 起跑（run 40590781626），
+# 而同一个 sha 的前两轮 nightly（40231287598、40412247335）都是绿的——仓内代码一行没变。
+# 根因在上游：pytest 9.2.0 的 NodeId 重构（changelog PR #14758）删掉了**私有** `_nodeid`
+# （`_pytest/nodes.py` 里 9.1.1 有 5 处、9.2.0 归零；该条目落在「Miscellaneous internal
+# changes」，明文只保证公开 `nodeid` 兼容），而 pytest-benchmark 仍是
+# `fixture.py:88 self.fullname = node._nodeid`（上游 issue #321 未关、修复 PR #323
+# 未进任何 release）。于是 `benchmark` fixture 构造即抛 AttributeError → 每条基准用例
+# setup 阶段报错 → pytest 退出码 1、会话秒退（step 8 实测 1s，绿的两轮同为 20s）。
+# 一次性 venv 单变量复核：9.2.0+5.3.0 判红 rc=1，9.1.1+5.3.0 通过 rc=0。
+# 范围限定（不要写成「9.2.0 有毒」）：extras-health run 40598565970 同晚 22:56 装的
+# 正是 9.2.0，跑 `pytest tests/` 全绿——tests/ 从不使用 benchmark fixture，
+# 本钉版只针对基准路径。
+# 禁止改回区间式：那等于把「上游改了什么」这类红灯重新变成无出处的事件。
+# 解除条件：pytest-benchmark 发出含 #323 的版本后，先在一次性 venv 重跑上述合成探针，
+# 再在 3.10/3.11/3.12/3.13 四条腿上跑通 benchmarks/，并连带验证 9.2.0 自带的三个真实
+# breaking（#14716 `-c` 路径、#8593 parametrize 关键字化、#993 插件导入退出码）再抬钉。
+# 任何 pytest 抬钉都必须重跑这一步——dependabot 会把 9.1.1→9.2.0 当 minor 提 PR。
+pytest==9.1.1
 pytest-cov>=4.1.0,<8
 # 覆盖率引擎钉死单版本：coverage 7.17.0（2026-10-22 发布）起 requires-python >=3.11，
 # 未钉版时 CI 12 腿矩阵会同时跑两个测量引擎——py3.10 腿解析 7.16.2、其余腿 7.17.0。
@@ -11,7 +30,13 @@ pytest-cov>=4.1.0,<8
 coverage[toml]==7.16.2
 # 性能基准（基准套件在 benchmarks/，CI 由 benchmark.yml 的 benchmark job 执行；
 # 回归阈值与本地运行命令见 docs/bench/README.md）
-pytest-benchmark>=4.0,<6
+# 钉死单版本（原 >=4.0,<6）：它同属「测量引擎」而非普通 helper。`fullname`（即上游
+# 那个 `_nodeid`）是 --benchmark-compare ±15% 门禁与 gh-pages 趋势序列的 join key，
+# 插件版本一变、命名或统计口径一变，对比会静默失配且日志无痕；benchmark-head.json
+# 顶层就带插件 __version__，与 coverage.xml 的 version 属性同族。
+# 实证分裂：开发机装的是 5.2.3、CI 解析 5.3.0，本地与 CI 已经不同源。
+# 解除条件：与上方 pytest 抬钉同步评审（pytest-benchmark 发出含 #323 的新版后一起换）。
+pytest-benchmark==5.3.0
 # 静态类型检查（配置见 pyproject.toml [tool.mypy]；CI 由 typecheck job 执行）
 # 钉死单版本（与 coverage[toml] 同口径）：区间式让 CI 与开发机由 resolver 各选一版，
 # 「本地 0 错误 / CI 红」时无从排除版本因素。取 2026-10-23 CI typecheck job 实跑版本。

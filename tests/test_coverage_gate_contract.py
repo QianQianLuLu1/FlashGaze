@@ -23,7 +23,9 @@
 - ``requirements-dev.txt``：coverage 引擎必须钉死单版本（不钉时 12 腿矩阵
   会因 requires-python 差异解析出两个版本，跨腿覆盖率不再是同一口径）；
   ruff / mypy / types-requests 同样钉死单版本（区间式会让 CI 与开发机各取
-  一版，静态 job 变红时无法排除版本因素）。
+  一版，静态 job 变红时无法排除版本因素）；pytest 与 pytest-benchmark 同样
+  钉死，且 pytest 不得钉在已知会打死 benchmark fixture 的版本上（区间式让
+  nightly 在无人改代码时换掉测试引擎，见 pitfalls §3.14）。
 
 改门槛、改 omit、改 CI 门禁结构时，必须同步更新本测试与 README
 「覆盖率门禁」小节、docs/extras-governance.md 的口径。
@@ -55,6 +57,20 @@ HYBRID_SCORER_PY = REPO_ROOT / "flashgaze" / "core" / "hybrid_scorer.py"
 # rhysd/github-action-benchmark 没有这两个入参（该 action 唯一的 required 入参是
 # output-file-path）。写了不会报错、只会被静默忽略，所以必须由契约测试钉住。
 BENCHMARK_UNDECLARED_INPUTS: frozenset[str] = frozenset({"raw-data-file", "output-storage"})
+
+# pytest 与 pytest-benchmark 的已知不兼容版本集合。来源是上游源码逐字比对，不是猜测：
+# pytest 9.2.0 的 NodeId 重构（changelog PR #14758）删掉了**私有** ``_nodeid``
+# （``_pytest/nodes.py``：9.1.1 命中 5 处、9.2.0 命中 0 处，条目明文只保证公开
+# ``nodeid`` 兼容），而 pytest_benchmark/fixture.py:88 仍是 ``self.fullname =
+# node._nodeid``，上游 issue #321 未关、修复 PR #323 未进任何 release（最新版仍是
+# 5.3.0）。后果是 ``benchmark`` fixture 构造即抛 AttributeError → 每条基准用例
+# setup 报错 → 退出码 1，CI run 40590781626 的 step 8 因此只用 1 秒（绿的两轮 20s）。
+# 单靠「有没有 ==」拦不住下一轮：dependabot 会把 pytest 9.1.1→9.2.0 当 minor 提 PR，
+# 而 ``pytest==9.2.0`` 同样满足「钉死单版本」。所以这里显式记住这个版本，
+# 抬钉前必须先在一次性 venv 用合成探针复跑（见 requirements-dev.txt 的解除条件）。
+# 范围限定：9.2.0 对 ``pytest tests/`` 实测无害（extras-health run 40598565970 带它全绿），
+# 本集合只针对 benchmark 路径，不是「pytest 9.2.0 有毒」的判定。
+PYTEST_BENCHMARK_INCOMPATIBLE: frozenset[str] = frozenset({"9.2.0"})
 
 # 主门禁数值（单一来源 .coveragerc [report] fail_under；本次修复不改变它）。
 MAIN_FAIL_UNDER = 80
@@ -433,6 +449,59 @@ def test_static_analysis_tools_are_pinned_to_single_version() -> None:
         assert "==" in specs[0], (
             f"{pkg} 必须钉死单版本（实际 {specs[0]}）；"
             "升级走 dependabot 评审后改钉新单版本，解除前提见该文件注释与 pitfalls §3.8"
+        )
+
+
+def test_pytest_engine_is_pinned_out_of_known_bad_combination() -> None:
+    """pytest / pytest-benchmark 必须钉死单版本，且钉住的版本不得是已知不兼容版。
+
+    回归实证：区间式 ``pytest>=7.4.0,<10`` 让 nightly 自动吃到 2026-10-27T21:30:19Z
+    刚发布的 pytest 9.2.0，25 分钟后 benchmark run 40590781626 的 step 8 用 1 秒判红
+    （rc=1），而同一个 sha 的前两轮 nightly 都是绿的——红灯完全来自 resolver 换引擎。
+    机制见 PYTEST_BENCHMARK_INCOMPATIBLE 注释：pytest 删私有 ``_nodeid``，
+    pytest-benchmark 还在读它。
+
+    反例有两条方向，缺一不可：
+    - 改回区间式（``>=7.4.0,<10`` / ``>=4.0,<6``）→ 钉版断言判红；
+    - 写 ``pytest==9.2.0`` → **只查 ``==`` 的守卫会照样放行并把 job 重新打红**，
+      这条由已知不兼容集合拦下，也是本用例不是既有钉版用例复制品的凭证。
+    删掉 requirements-dev.txt 注释里的取证 run 号或上游 issue 号同样判红——
+    留下钉版而丢掉出处，下一轮就会把这条约束当成无来由的保守再改回去。
+    """
+    text = _read_text(DEV_REQ)
+    entries = [
+        ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")
+    ]
+    pytest_specs = [e for e in entries if re.match(r"^pytest[=<>!~]", e)]
+    assert len(pytest_specs) == 1, (
+        f"requirements-dev.txt 必须且只能有一条 pytest 声明，实际 {pytest_specs}；"
+        "区间式会让 nightly 在无人改代码时换掉测试引擎，红灯无从归因"
+    )
+    spec = pytest_specs[0]
+    assert "==" in spec, (
+        f"pytest 必须钉死单版本（实际 {spec}）；解除前提见该文件注释与 pitfalls §3.14"
+    )
+    pinned = re.match(r"^pytest==([^,\s;]+)", spec)
+    assert pinned is not None, f"无法从 {spec} 解析出钉住的 pytest 版本号"
+    assert pinned.group(1) not in PYTEST_BENCHMARK_INCOMPATIBLE, (
+        f"pytest 钉在了已知会打死 benchmark fixture 的版本 {pinned.group(1)}："
+        "pytest-benchmark 读私有 _nodeid 而 pytest 已删除它（CI run 40590781626）。"
+        "抬钉前须在一次性 venv 重跑合成探针并覆盖四条 Python 腿，"
+        f"解除后把 {pinned.group(1)} 移出 PYTEST_BENCHMARK_INCOMPATIBLE"
+    )
+
+    bench_specs = [e for e in entries if re.match(r"^pytest-benchmark[=<>!~]", e)]
+    assert len(bench_specs) == 1, f"必须且只能有一条 pytest-benchmark 声明，实际 {bench_specs}"
+    assert "==" in bench_specs[0], (
+        f"pytest-benchmark 必须钉死单版本（实际 {bench_specs[0]}）：它是基准测量引擎，"
+        "fullname 是 --benchmark-compare 与 gh-pages 趋势序列的 join key，"
+        "版本漂移会让 ±15% 门禁静默失配（与 coverage 钉版同族）"
+    )
+
+    for token in ("40590781626", "#321"):
+        assert token in text, (
+            f"requirements-dev.txt 缺少取证出处 {token}：钉版注释必须自带因果链，"
+            "否则下一轮会把这条约束当成没有来由的保守而改回区间式"
         )
 
 

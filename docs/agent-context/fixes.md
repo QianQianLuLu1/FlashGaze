@@ -439,3 +439,59 @@
   `tests/test_portrait_import_guard.py` 与 `portrait_engine.py` 里描述崩溃链的注释已同步订正，
   不留「注释说谎」。
 
+## 4.12 nightly Benchmark 秒退：pytest 9.2.0 删私有 `_nodeid` 打死 pytest-benchmark（2026-10-28，非审查编号项）
+
+- **现象**：CI run **40590781626**（`schedule`、sha `2d94e08`、2026-10-27T21:55:46Z）唯一红灯是
+  job `benchmark (ubuntu, py3.12)`（id 122494145967）**step 8「Run head benchmarks with
+  regression gate」用时 1 秒**，annotation 只有 `Process completed with exit code 1`。
+  steps 10~13（gh-pages 趋势链路）随之整批 skipped。**同一 sha 的前两轮 nightly
+  （40231287598 10-25、40412247335 10-26）全绿，step 8 各 20s**——代码一行没变。
+- **取证四路（因 job logs 免鉴权 403，版本从未被日志直接观测）**：
+  1. 区间式 `pytest>=7.4.0,<10` 让 nightly 每轮由 resolver 重新决定引擎版本。
+  2. pytest **9.2.0 上 PyPI 的时间是 2026-10-27T21:30:19Z，比该 run 起跑早 25 分钟**；
+     10-25/26 两日的最新可用版是 9.1.1。
+  3. 机制逐字比对：`src/_pytest/nodes.py` 的 `_nodeid` 在 **9.1.1 命中 5 处、9.2.0 命中 0 处**
+     （changelog PR **#14758** 的 `NodeId` 重构，条目在「Miscellaneous internal changes」，
+     明文只保证公开 `nodeid` 兼容）；`pytest_benchmark/fixture.py:88` 仍是
+     `self.fullname = node._nodeid`，上游 issue **#321** open、修复 PR **#323** 未发版。
+  4. **一次性 venv 单变量复现（这一步补上唯一缺的直接观测）**：同 venv 同插件版本只换 pytest——
+     `9.2.0 + 5.3.0` → `ERROR AttributeError: 'Function' object has no attribute '_nodeid'`、
+     **rc=1**（与 CI annotation 逐字同源）；`9.1.1 + 5.3.0` → 1 passed、**rc=0**。
+     退出码本身还有鉴别力：9.2.0 的 #993 把插件导入失败判 4、收集失败判 2，rc=1 恰好排除这两类。
+- **须如实记账的反信号**：失败那轮 step 4「Install dependencies」**9s**、绿的两轮 **16s**——
+  装新 wheel 本该更慢，方向相反。数值在 runner 噪声范围内，但正因为没拿到日志，
+  「装的是哪个版本」只能靠复现补证，不能靠推断宣称已观测。
+- **范围限定（别写成「9.2.0 有毒」）**：`extras-health.yml` 同样装 `requirements-dev.txt`、
+  跑 `python -m pytest tests/`，其 run **40598565970（同晚 22:56，装的正是 9.2.0）全绿**。
+  `tests/` 从不使用 `benchmark` fixture，所以这是**基准路径专属**的定向规避，不是通用判定；
+  注释、pitfalls §3.14 与本条都按这个口径写。
+- **修（阈值 / 矩阵 / 超时预算一条未动，也没有删腿或 `continue-on-error`）**：
+  `requirements-dev.txt` 钉 `pytest==9.1.1` 与 `pytest-benchmark==5.3.0`，各带「因果链 + 时间
+  证据 + 同 sha 对照 + 上游凭证 + 范围限定 + 禁止区间式 + 解除条件」六段注释。后者一并钉的理由
+  与 `coverage[toml]` 同族：`fullname` 是 `--benchmark-compare` ±15% 门禁与 gh-pages 趋势序列的
+  **join key**，插件换代失配是静默的、日志无痕（`benchmark-head.json` 顶层就带插件
+  `__version__`）；且实测开发机 5.2.3 / CI 5.3.0 已经不同源。
+- **新增契约守卫 1 条（`test_coverage_gate_contract.py` 18 → 19 条）**：
+  `test_pytest_engine_is_pinned_out_of_known_bad_combination`，五向断言——唯一 pytest 声明、
+  含 `==`、**钉住的版本不在 `PYTEST_BENCHMARK_INCOMPATIBLE = {"9.2.0"}`**、pytest-benchmark
+  同样钉死、取证 token（`40590781626` 与 `#321`）必须留在注释里。
+- **四条反例逐条实跑判红，随后用备份还原并 `git diff` 复核无残留**：
+  a) 改回 `pytest>=7.4.0,<10` → `assert '==' in 'pytest>=7.4.0,<10'` 判红；
+  b) 写 `pytest==9.2.0` → **其余 18 条全绿，只有新守卫判红**（这条就是「只查 `==`」拿不到的
+     非空洞性凭证：dependabot 因 `ignore semver-major` 会把 9.1.1→9.2.0 当 **minor** 提 PR，
+     而 `pytest==9.2.0` 完全满足「已钉版」）；
+  c) 改回 `pytest-benchmark>=4.0,<6` → join-key 断言判红；
+  d) 删掉注释里的 run 号 → token 断言判红（留钉版丢出处的话，下一轮会把它当无来由的保守改回去）。
+- **顺带关掉 §4.11 遗留的唯一未确认项**：extras-health 链路首次真实执行已达成——run 40598565970
+  的 `collect`（11 步，含 step 5 真实跑 extras 测试）与 `publish trend charts`（5 步，含
+  gh-pages 重试推送）**全部 success**；`weekly-report` 因非周一 skipped；R4 的 sentinel / 建
+  Issue / 关 Issue 三处 skipped 是 `JUDGED_MODULES` 收敛后判定为 ok 的**期望行为**，
+  即 §4.10 设计的自愈链路自此可用。
+- **仍然只能由 CI 终验**：push 到 `main` 触发 `benchmark.yml` 的 `on.push`（同一条 step 8、
+  同一 resolver）后，必须看到 success **且 step 8 时长回到 20s 量级**——1s 意味着基准根本没跑，
+  即便 rc=0 也不算通过；再 `workflow_dispatch full=true` 复现 nightly 那条 `MARKER_ARGS=()`
+  分支；下一轮 18:00 UTC nightly 作第二样本（§4.11 的「别拿单样本当结论」对本条同样适用）。
+- **推论（尚未做）**：`pytest-cov>=4.1.0,<8` 仍浮动，是同族残留风险，本轮不扩大改动面；
+  解钉那一轮须一并覆盖 9.2.0 的三个真实 breaking（#14716 / #8593 / #993）与四条 Python 腿。
+
+

@@ -45,11 +45,17 @@ main/nightly 运行累积趋势数据并在 gh-pages 渲染趋势图。
   `https://<org>.github.io/FlashGaze/dev/bench/`（需在仓库 Settings → Pages
   启用 gh-pages 分支；未启用时数据仍正常累积，只是没有网页视图）
 - 基准环境固定 ubuntu-latest + Python 3.12 单腿：跨 OS/版本对比没有意义
+- **测量引擎钉死单版本**：`requirements-dev.txt` 钉 `pytest==9.1.1` 与
+  `pytest-benchmark==5.3.0`。区间式会让 nightly 在无人改代码时换掉引擎——
+  pytest 9.2.0（2026-10-27 发布）删私有 `_nodeid` 而 pytest-benchmark 仍读它，
+  `benchmark` fixture 构造即抛 `AttributeError`，step 8 因此 1 秒判 rc=1
+  （CI run 40590781626，见 pitfalls §3.14 / fixes §4.12）。抬钉前须先在一次性 venv
+  用合成探针复跑，并覆盖 3.10/3.11/3.12/3.13 四条腿
 
 ## 本地运行
 
 ```bash
-pip install -r requirements-dev.txt          # 含 pytest-benchmark
+pip install -r requirements-dev.txt          # 含钉版的 pytest / pytest-benchmark
 
 # 跑 quick 集（.benchmarks/ 目录会留 autosave 历史，已 gitignore）
 python -m pytest benchmarks/ -m "not bench_full" --benchmark-autosave
