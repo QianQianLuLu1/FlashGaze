@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793053548113,
+  "lastUpdate": 1793197736327,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -1034,6 +1034,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000018147547469727793",
             "extra": "mean: 639.9320000042508 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "f3b8187aa8e6d40acbcc324145aaeb2e58a01026",
+          "message": "fix(ci): 钉死测试与基准引擎，消掉 nightly 被上游换代打死的秒退\n\nrequirements-dev.txt 的 pytest>=7.4.0,<10 让每轮 nightly 由 resolver 重新决定引擎版本。\npytest 9.2.0（2026-10-27T21:30:19Z 上 PyPI，比 run 40590781626 起跑早 25 分钟）的 #14758\n删掉了私有 _nodeid（9.1.1 命中 5 处、9.2.0 命中 0 处），而 pytest_benchmark/fixture.py:88\n仍读它（上游 issue #321 未关、修复 PR #323 未进任何 release）——于是 benchmark fixture\n构造即抛 AttributeError、9 条基准用例全部在 setup 阶段报错、rc=1、step 8 只用 1 秒，\n而同一个 sha 的前两轮 nightly 各 20s 全绿，仓内代码一行没变。\n\n一次性 venv 的单变量复现补上本轮唯一的直接观测（job logs 免鉴权 403，装的是哪个版本\n从未被日志看到）：9.2.0+5.3.0 判红 rc=1，9.1.1+5.3.0 通过 rc=0。范围限定：9.2.0 对\npytest tests/ 实测无害（extras-health run 40598565970 带它全绿），钉版只针对基准路径。\n\npytest-benchmark 一并钉：fullname 是 --benchmark-compare ±15% 门禁与 gh-pages 趋势序列\n的 join key，插件换代失配静默无痕；且实测开发机 5.2.3 / CI 5.3.0 已经不同源。\n\n阈值、矩阵、超时预算一条未动，也没有撤腿或加 continue-on-error。新增契约守卫 1 条\n（18→19），要拦的不只是「没钉版」，还有「钉在坏版本上」：写 pytest==9.2.0 时其余 18 条\n全绿、只有新守卫判红——dependabot 因 ignore semver-major 会把这个升级当 minor 提 PR。\n四条反例逐条实跑判红并用备份还原（git diff 复核无残留）。\n\n顺带关掉上一轮遗留的唯一未确认项：extras-health 链路首次真实执行已验证 collect 与\ncharts 两个 job 全绿。",
+          "timestamp": "2026-10-28T22:24:58+08:00",
+          "tree_id": "fdb9e67c3248acc1da9f547d4c5686bdd6b924a2",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/f3b8187aa8e6d40acbcc324145aaeb2e58a01026"
+        },
+        "date": 1793197736024,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 11.305861441708506,
+            "unit": "iter/sec",
+            "range": "stddev: 0.013845961892203391",
+            "extra": "mean: 88.44969533333351 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.271307819188022,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0020266597321456138",
+            "extra": "mean: 75.35052412499788 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 212.67920017082005,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004085215379102936",
+            "extra": "mean: 4.701917250002907 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2389.9159650057527,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001423315159357331",
+            "extra": "mean: 418.42475410954165 usec\nrounds: 1460"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.514268558414756,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006830940685824889",
+            "extra": "mean: 44.41627749999668 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 45.98560177013306,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004971714757492727",
+            "extra": "mean: 21.745937021737195 msec\nrounds: 46"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 96.6979338146372,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00035256875118976283",
+            "extra": "mean: 10.34148259999977 msec\nrounds: 95"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1498.5550183243754,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000058168264524428786",
+            "extra": "mean: 667.3094999996465 usec\nrounds: 10"
           }
         ]
       }
