@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793230046915,
+  "lastUpdate": 1793316610152,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "FlashGaze Extras Coverage": [
@@ -275,6 +275,61 @@ window.BENCHMARK_DATA = {
             "range": "RANGE",
             "unit": "%",
             "extra": "2026-10-28T23:27:16.452913+00:00"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "FlashGaze Init",
+            "email": "init@flashgaze.local"
+          },
+          "committer": {
+            "name": "FlashGaze Init",
+            "email": "init@flashgaze.local"
+          },
+          "id": "68c086b37dd5208f06bca1959a2e1d3ae81fa658",
+          "message": "docs(ci): 把 step 8 的判据按触发事件拆开，改掉我自己混用的 20s\n\npush f3b8187 后 run 40706255565 的 step 8 是 6s 而非我写的「20s 量级」。查下来是我把两个\n分支的口径混了：20s 属于含 bench_full 的 nightly，push 走 quick 集（8 通过 + 1 去选）。\n正确的同触发对照是同为 push 的修复前绿 run 40191369021，step 8 也是 6s——逐字相同才算\n基准真在跑。判据按触发事件分别取（push ≈6s / schedule ≈20s），否则下一轮会把一条绿 run\n读成可疑。\n\n同时记录 push 分支已终验通过（steps 10~13 由整批 skipped 变回 success，即\nbenchmark-head.json 真实产出），并如实标注 schedule 分支仍无第二样本：本机既无 gh 也无\nGITHUB_TOKEN，workflow_dispatch full=true 无法从这里触发，只能等下一轮 18:00 UTC 定时。",
+          "timestamp": "2026-10-28T14:28:44Z",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/68c086b37dd5208f06bca1959a2e1d3ae81fa658"
+        },
+        "date": 1793316609378,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "flashgaze.mcp_server",
+            "value": 87.71,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-10-29T23:29:58.397846+00:00"
+          },
+          {
+            "name": "flashgaze.webui.app",
+            "value": 85.77,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-10-29T23:29:58.397846+00:00"
+          },
+          {
+            "name": "flashgaze.core.xlsx_exporter",
+            "value": 100,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-10-29T23:29:58.397846+00:00"
+          },
+          {
+            "name": "flashgaze.core.deduplicator",
+            "value": 83.72,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-10-29T23:29:58.397846+00:00"
+          },
+          {
+            "name": "flashgaze.core.portrait_engine",
+            "value": 51.11,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-10-29T23:29:58.397846+00:00"
           }
         ]
       }
