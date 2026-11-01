@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793481133146,
+  "lastUpdate": 1793569779523,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -1522,6 +1522,89 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000063060321236814795",
             "extra": "mean: 470.480299999565 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "FlashGaze Init",
+            "email": "init@flashgaze.local"
+          },
+          "committer": {
+            "name": "FlashGaze Init",
+            "email": "init@flashgaze.local"
+          },
+          "id": "68c086b37dd5208f06bca1959a2e1d3ae81fa658",
+          "message": "docs(ci): 把 step 8 的判据按触发事件拆开，改掉我自己混用的 20s\n\npush f3b8187 后 run 40706255565 的 step 8 是 6s 而非我写的「20s 量级」。查下来是我把两个\n分支的口径混了：20s 属于含 bench_full 的 nightly，push 走 quick 集（8 通过 + 1 去选）。\n正确的同触发对照是同为 push 的修复前绿 run 40191369021，step 8 也是 6s——逐字相同才算\n基准真在跑。判据按触发事件分别取（push ≈6s / schedule ≈20s），否则下一轮会把一条绿 run\n读成可疑。\n\n同时记录 push 分支已终验通过（steps 10~13 由整批 skipped 变回 success，即\nbenchmark-head.json 真实产出），并如实标注 schedule 分支仍无第二样本：本机既无 gh 也无\nGITHUB_TOKEN，workflow_dispatch full=true 无法从这里触发，只能等下一轮 18:00 UTC 定时。",
+          "timestamp": "2026-10-28T14:28:44Z",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/68c086b37dd5208f06bca1959a2e1d3ae81fa658"
+        },
+        "date": 1793569779071,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 11.856818295374177,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0028105997611531023",
+            "extra": "mean: 84.33965799999991 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_full_100_2000x1500",
+            "value": 0.30515664020165056,
+            "unit": "iter/sec",
+            "range": "stddev: 0.03333698551912744",
+            "extra": "mean: 3.2770055383333294 sec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.270360694507715,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0013766803461131352",
+            "extra": "mean: 75.35590200000186 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 207.57644151656785,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004646653617895887",
+            "extra": "mean: 4.817502374999449 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2406.834433747931,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000030340733964904913",
+            "extra": "mean: 415.48350230422636 usec\nrounds: 1519"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.373065256460546,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006811831217428613",
+            "extra": "mean: 44.69660230000159 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 46.261746323781864,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00030409537084154524",
+            "extra": "mean: 21.616131673912363 msec\nrounds: 46"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 97.46254071740401,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001413760020057563",
+            "extra": "mean: 10.260352260870507 msec\nrounds: 92"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1530.0481567363972,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001661892738507416",
+            "extra": "mean: 653.5741999996958 usec\nrounds: 10"
           }
         ]
       }
