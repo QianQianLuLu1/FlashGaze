@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793958742614,
+  "lastUpdate": 1793960012696,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -2088,6 +2088,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000012892413137587017",
             "extra": "mean: 654.9416999988011 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "5cc0781ae569c379289bf5518fe6524d9680eb7b",
+          "message": "fix(ci): 反向对照降到字节层，消掉上一提交在 POSIX 八条腿上的二次翻车\n\n37d7b7f 推送后 CI run 42198208112：py3.10 三腿的原始缺陷确已修好（每腿只剩 1 failed、\n1070 passed），但失败的用例换成了我自己新写的那半——windows 四腿绿、ubuntu + macOS\n共八腿红：UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f in position 16。\n\n根因是我把「非空洞性凭证」写成 _run(cmd, encoding=\"cp1252\") 后断言「拿不到诊断」，\n而这个「拿不到」的形态本身是平台专属的：POSIX 的 Popen._communicate 用 _PopenSelector\n读原始字节、回主线程才 _translate_newlines 解码，异常直接抛给用例；Windows 起\n_readerthread 在子线程 fh.read()，异常逃出线程、收集值静默留 None。开发机是 Windows，\n于是本机 16 passed 全绿、推上去八条腿判红。这与 pitfalls §3.9 同族，且这一笔是本轮新欠的：\n我在 Windows 上验证了一种死法，就替 12 条腿担保了全部死法。\n\n修（仍零生产代码改动，不放宽任何断言）：反向对照降到字节层——子进程 capture_output 拿\n原始 bytes，断 combined.decode(\"utf-8\") 含「参数非法」+ pytest.raises(UnicodeDecodeError)\n于 combined.decode(\"cp1252\")；正向仍走 _run 的公开默认（显式 UTF-8）。两段都不再进入\nsubprocess 的任何平台分支，12 腿同码同判。filterwarnings 忽略 reader 线程异常的标记随之\n删除（bytes 模式下不再产生该异常）。\n\n证据：py3.12 / py3.11.16 / CPython 3.10.20 真机各 16 passed；变异复核（_run 默认 encoding\n改 cp1252）本机以 CI 原始签名 TypeError: can only concatenate str (not \"NoneType\") 判红、\n还原后转绿、git diff 无残留；全量 1076 passed / 29 skipped / 38 deselected、覆盖率\n90.49% >= 80；ruff check / format --check（103 files，含 ci-fix-plan.md 里的 python 代码块）/\nmypy 两面（82 files）/ check_agents_md 全绿。\n\n口径同步：pitfalls §3.15 补「二阶缺陷」与一般化第 5 条（非空洞性凭证要选平台无关的层去断）、\nfixes §4.14 补二次翻车与终态证据、AGENTS.md §3.15/§4.14 行与末尾「最后更新」改写、\ndocs/ci-fix-plan.md 新增 §11.6。",
+          "timestamp": "2026-11-06T18:09:09+08:00",
+          "tree_id": "ab4b883f36facd031b3674a29faffac94918d812",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/5cc0781ae569c379289bf5518fe6524d9680eb7b"
+        },
+        "date": 1793960012104,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 12.719426429166761,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001850312543414172",
+            "extra": "mean: 78.61989733333512 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.585067371381275,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0017881514161925951",
+            "extra": "mean: 73.61023487499452 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 212.17205626119002,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002352306625999422",
+            "extra": "mean: 4.713156000001106 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2454.231133673211,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000021749095653546297",
+            "extra": "mean: 407.4595853175878 usec\nrounds: 1512"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.64616948580894,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006644839169443534",
+            "extra": "mean: 44.15757819999726 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 45.81696041842322,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0007936365118707086",
+            "extra": "mean: 21.825978652173863 msec\nrounds: 46"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 98.05071437035502,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010609993437676199",
+            "extra": "mean: 10.19880381720445 msec\nrounds: 93"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1529.481832964824,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015245869653376005",
+            "extra": "mean: 653.8162000012449 usec\nrounds: 10"
           }
         ]
       }
