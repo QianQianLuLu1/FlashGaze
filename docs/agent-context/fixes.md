@@ -559,3 +559,84 @@
   **1075 passed / 29 skipped / 38 deselected**。
 
 
+## 4.14 §4.13 的修复自身引入 py3.10 三腿红灯：私有 `_text_encoding` + 一条恒真用例（2026-11-06，非审查编号项）
+
+- **现象**：§4.13 的三次推送（`052d77b` / `b192548` / `687756c`）把 `Benchmark` 修绿并开始
+  真实推送 gh-pages（`8ea3dd06`、`d3b9c791`），但 `CI` 仍红。最新 run **42188510332**
+  （push、`687756c`）19 个 job 里 **3 条 py3.10 腿红**（ubuntu / macos / windows，全在
+  step 5），其余 16 个 job 绿，`extras` 与 `e2e` 三个 job 因 test job 未过而 **skipped
+  （不是绿）**。失败面经 job 日志逐腿确认为**每条腿各 1 个失败**：
+  `= 1 failed, 1069 passed, 29 skipped, 28 deselected =`（ubuntu py3.10）。
+- **唯一失败用例**：`tests/test_ci_push_gh_pages.py::test_tool_output_decoded_as_utf8_on_non_utf8_runner`
+  → `AttributeError: <module 'subprocess' … >/python3.10/subprocess.py'> has no attribute
+  '_text_encoding'`。本机 `uv venv --python 3.10`（CPython 3.10.20）+ `--noconftest` 单文件
+  逐字复现：**1 failed, 15 passed**，与 CI annotation 同源。
+- **根因（两层，第二层更贵）**：
+  1. `subprocess._text_encoding` 是 **3.11 才有的私有函数**（本机 3.11.16 / 3.12.10 实测存在，
+     实现走 `locale.getencoding()`；3.10 的 `subprocess.py` 无此名），而本仓下限是 3.10。
+     `monkeypatch.setattr` 默认 `raising=True` → 属性不存在即在 setup 阶段抛错。
+  2. 该补丁**即使在 3.11+ 也不参与任何行为**：同文件 `_run` 已写死 `encoding="utf-8"`，
+     subprocess 的「默认文本编码」这条路径根本不被走。也就是说 §4.13 花了一轮把红灯换成了
+     一条恒真的绿——`tests/` 里最危险的一种用例。
+- **为什么两道静态门禁都放行**：`mypy strict` 的 `python_version=3.10` 确实能拦**属性访问**
+  形态，但符号名是 `setattr` 的**字符串实参**，无从求值；ruff 的 `target-version="py310"`
+  只覆盖语法层，默认规则集也不含 SLF001。开发机是 3.12，9 条腿在 3.11+ → 全靠矩阵下限那条腿。
+- **同轮附带取证（把 §4.13 的结论从「引用」升级为「实测」）**：本轮找到可用凭据通道
+  （本机 git credential helper 里的 GitHub 凭据，只读调用 `/actions/jobs/{id}/logs`，
+  未写入/未修改任何配置、未在仓库留凭据），拿到 11-05 nightly job **127600884450** 的完整日志。
+  §4.13 的四条缺陷全部在日志里逐字命中，链条如下（时间戳已省略）：
+  ```
+  remote: fatal error in commit_refs_rules
+   ! [remote rejected] gh-pages -> gh-pages (fatal error in commit_refs_rules)
+  ##[warning]gh-pages 推送被拒，同步最新远端后重试（第 1 次）
+  warning: skipped previously applied commit c3ab8cf
+  Rebasing (1/15)
+  Committer identity unknown
+  fatal: empty ident name (for <runner@runnervmwuk1x…>) not allowed
+  ##[error]gh-pages rebase 冲突，本次趋势数据推送中止，下一轮运行自愈
+  ##[error]Process completed with exit code 1.
+  ```
+  即：平台瞬时拒绝 → `--depth=50` 让 git 丢掉共同历史、把 15 个提交从头重放（`skipped
+  previously applied commit c3ab8cf` 是初始提交也被卷进来的直接凭证）→ rebase 在**造提交**
+  时才因缺身份 fatal → 被误报成「rebase 冲突需人工处理」→ 退出码 1。**内容冲突从未发生**
+  （两工作流写 `dev/bench/` 与 `dev/coverage/` 不同目录），所以「冲突」这句诊断本身是假的。
+  另确认 §4.13 记录的「11-05 数据点永久缺失」属实：远端 gh-pages 提交序列
+  `a3d01c8f`(11-04 23:23 Benchmark) → `03533788`(11-06 00:28 extras) 之间没有 11-05 的
+  Benchmark 提交。
+- **修复（生产代码 / workflow / 阈值 / 矩阵 / 超时一条未动）**：
+  1. `tests/test_ci_push_gh_pages.py`：删掉私有符号补丁，改走 `_run` **已有的公开 `encoding`
+     参数**做双向断言——`encoding="cp1252"` 时诊断整段丢失（非空洞性凭证）、默认显式 UTF-8
+     时诊断完整。反向那半会真的让 reader 线程抛 `UnicodeDecodeError`，故加
+     `@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")`
+     显式声明「这是被证明的机制本身」，避免将来 `filterwarnings` 收紧成 error 时把它打红。
+  2. `tests/test_coverage_gate_contract.py` **19 → 20 条**：新增
+     `test_no_test_patches_private_stdlib_api`（AST 扫 `tests/**/*.py`，按 import 根名 ∩
+     `sys.stdlib_module_names` 判归属，拦 `setattr`/`delattr` 打在 stdlib 私有符号上的
+     **对象形式与字符串形式**）。三向自证：真实仓库扫描（先红后绿）、合成反例必被抓、
+     项目模块私有属性（`hs._evaluate_cv_and_portrait`）不得误报；另加 `len(test_files) >= 40`
+     的扫描非空洞性前置（实测 44：顶层 42 + `tests/e2e` 2）——`TESTS_DIR` 写错会让 rglob
+     返回空清单，把守卫变成一盏永远绿的灯。
+  3. **明确否决的两种改法**：`raising=False`（只把 AttributeError 换成静默恒真，正是本条要
+     拦的形态）；`skipif(sys.version_info < (3,11))` 或把该文件从 3.10 腿摘掉（用「不测」
+     冒充「修好」）。
+- **红灯 → 绿灯（逐条实测）**：
+  | 用例 | 修复前 | 修复后 |
+  |---|---|---|
+  | `test_no_test_patches_private_stdlib_api`（真实扫描） | 失败，逐字指名 `tests/test_ci_push_gh_pages.py → 376: subprocess._text_encoding` | 通过（清单为空） |
+  | 同用例合成反例（对象形式 / 字符串形式） | 随守卫一起红（尚未存在） | 通过（两种形态都被抓） |
+  | 同用例项目模块对照 | — | 通过（不误报） |
+  | `…decoded_as_utf8_on_non_utf8_runner` @py3.10 真机 | **失败**（AttributeError，与 CI 逐字同源） | 通过（该文件 16 passed） |
+  | 同用例 @py3.11 / py3.12 | 通过但恒真 | 通过且真在测契约 |
+  | 变异复核：`_run` 默认 `encoding` 改 `"cp1252"` | — | **判红**，报 `TypeError: can only concatenate str (not "NoneType")`（与 CI run 42185258304 的原始签名逐字相同）；还原后转绿，`git diff` 无残留 |
+- **本轮仍不可本地证明、须 CI 终验**：`extras` 与 `e2e`（这两个 job 只因 test 腿红而被
+  skipped，本轮是它们在新配置下的第一次真实执行机会）；三条 py3.10 腿在**完整矩阵**
+  （带 conftest 与 extras）下的结果——本地 py3.10 复现是 `--noconftest` 单文件，
+  绕开了需要 cv2/numpy/PIL 的 conftest，覆盖面小于 CI 那条腿。
+- **遗留（如实记账，不在本轮扩大改动面）**：① `schedule` 分支的 gh-pages 推送在新工具下
+  尚无样本，下一轮 nightly 才是首验（§4.11 的「别拿单样本当结论」同样适用）；
+  ② `commit_refs_rules` 这类平台故障不可根除，本轮只收敛影响，5 次退避耗尽仍会判红，
+  但报的是正确分类；③ `tools/ci/push_gh_pages.py::_git` 用 `text=True` 未显式给 `encoding`
+  （`errors="replace"` 故不会崩，只在非 ASCII 的 git 诊断上 mojibake，而 `_classify` 只匹配
+  ASCII 片段，且该脚本只在 ubuntu/py3.12 跑）→ 记录不动；④ `tools/ci/` 不在 mypy 的
+  `files = [flashgaze, tests, tools/bench]` 内，该脚本无类型门禁；⑤ 11-05 的 Benchmark
+  趋势点已永久缺失，gh-pages 图表留洞。

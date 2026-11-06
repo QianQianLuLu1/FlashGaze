@@ -535,5 +535,86 @@ pip-audit --strict -r requirements-dev.txt   # 与 report-only 步骤同款
 - 三次修复（逐条先红灯再转绿，见 10.2 最后 4 行）：脚本按需 `git switch` 目标分支并在
   结束时切回、去掉 shebang、启动时把 stdout/stderr 固定为 UTF-8；测试侧 `_run` 统一按
   UTF-8 解码。红灯复现改用替换 `subprocess._text_encoding`，不再依赖机器语言设置。
-- 最终 CI 结论：（本次提交推送后回填 run id / event / 结论）。
+- 三推 `687756c`（08:33:19Z）：**Benchmark 42188510298 success**（gh-pages 真实推进 `d3b9c791`，
+  11-05 事故的 gh-pages 链路至此闭环）；**CI 42188510332 仍红**，但失败面整体换到了另一头——
+  windows 四腿转绿，**三条 py3.10 腿**（ubuntu / macos / windows）改为红在
+  `test_tool_output_decoded_as_utf8_on_non_utf8_runner`：
+  `AttributeError: <module 'subprocess' …>/python3.10/subprocess.py'> has no attribute '_text_encoding'`。
+  即 10.2 表最后一行「红灯复现改用替换 `subprocess._text_encoding`」这个手法本身是新的缺陷，
+  它把一条红灯换成了一条恒真的绿 + 三条矩阵下限腿的红灯。**本轮结论见 §11。**
 
+
+
+---
+
+## 11. 第四轮：收掉 §10.4 遗留的 py3.10 三腿红灯（2026-11-06）
+
+### 11.1 失败面（逐腿用 job 日志确认，不靠推断）
+
+| run | event | sha | 结论 | 细节 |
+|---|---|---|---|---|
+| 42188510332 | push | `687756c` | CI failure | 19 job 中 3 条 py3.10 腿红在 step 5，其余 16 绿；`extras` / `e2e` 三个 job **skipped（非绿）** |
+| 42188510298 | push | `687756c` | Benchmark success | gh-pages 推进 `d3b9c791` |
+
+ubuntu py3.10 job 127794496252 日志逐字：`= 1 failed, 1069 passed, 29 skipped, 28 deselected, 3 warnings in 138.24s`
+→ 每条腿**只红 1 个用例**，失败面精确，不存在被首个报错掩住的其他 3.10 缺陷。
+
+### 11.2 根因（两层）
+
+1. `subprocess._text_encoding` 是 **3.11 才引入的私有函数**（本机 3.11.16 / 3.12.10 实测存在、
+   实现走 `locale.getencoding()`；3.10 的 `subprocess.py` 无此名）。`monkeypatch.setattr` 默认
+   `raising=True`，属性不存在即在用例 setup 阶段抛 `AttributeError`。本仓 `requires-python >=3.10`，
+   矩阵含 3 条 3.10 腿 → 只有它们红。开发机是 3.12，9 条腿在 3.11+，故本地与多数腿恒绿。
+2. **更贵的一层**：这条用例在 3.11+ **本来就是恒真的**——同文件 `_run` 已写死 `encoding="utf-8"`，
+   `subprocess` 的「默认文本编码」路径根本不被走，补丁打在一个不参与任何行为的私有符号上。
+   上一轮想复现的机制（父进程按 runner ACP 解码 → reader 线程吞异常 → stderr 变 None）
+   并没有因为补丁成功而被测到。
+3. 静态门禁为何放行：`mypy strict`（`python_version=3.10`）只拦**属性访问**形态
+   （`subprocess._text_encoding` 会报 no attribute），而这里符号名是 `setattr` 的**字符串实参**；
+   ruff `target-version="py310"` 只管语法层，默认规则集不含 SLF001。
+
+### 11.3 修法（生产代码 / workflow / 阈值 / 矩阵 / 超时预算一条未动）
+
+- `tests/test_ci_push_gh_pages.py`：删掉私有符号补丁，改走 `_run` **已有的公开 `encoding` 参数**
+  做双向断言——① `encoding="cp1252"` 时中文诊断整段丢失（非空洞性凭证；纯 Python 层机制，
+  与机器语言设置无关，12 腿一致）；② 默认（显式 UTF-8）时诊断完整。
+  反向那半会真的产生 reader 线程异常，故加
+  `@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")`
+  显式声明「这是被证明的机制本身」，避免将来 `filterwarnings` 收紧成 error 时把它打红。
+- `tests/test_coverage_gate_contract.py` 19 → **20 条**：新增 `test_no_test_patches_private_stdlib_api`
+  （AST 扫 `tests/**/*.py`，import 根名 ∩ `sys.stdlib_module_names` 判归属；对象形式与字符串形式
+  都拦——后者正是 mypy 看不见的那一半）。
+- **否决的改法**：`raising=False`（把红换成静默恒真，正是本条要拦的形态）；
+  `skipif(sys.version_info < (3,11))` 或把该文件从 3.10 腿摘掉（用「不测」冒充「修好」）；
+  把守卫范围扩到「一切私有符号」（会误报 `argparse._StoreTrueAction` 这类读取，把既有绿测试全打红）。
+
+### 11.4 红灯 → 绿灯（逐条实测，含真 3.10 解释器）
+
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| `test_no_test_patches_private_stdlib_api`（真实扫描） | 失败：`tests/test_ci_push_gh_pages.py → 376: subprocess._text_encoding` | 通过（清单为空） |
+| 同用例合成反例（对象形式 + 字符串形式） | 随守卫一起红 | 通过（两种形态都被抓） |
+| 同用例项目模块对照（`hs._evaluate_cv_and_portrait`） | — | 通过（不误报） |
+| `…decoded_as_utf8_on_non_utf8_runner` **@CPython 3.10.20 真机** | **失败**（AttributeError，与 CI annotation 逐字同源；该文件 1 failed / 15 passed） | 通过（该文件 16 passed） |
+| 同文件 @3.11.16 / @3.12.10 | 通过但恒真 | 通过且真在测契约（各 16 passed） |
+| 变异复核：`_run` 默认 `encoding` 改 `"cp1252"` | — | **判红**：`TypeError: can only concatenate str (not "NoneType")`（与 CI run 42185258304 的原始签名逐字相同）；还原后转绿，`git diff` 无残留 |
+
+本地 py3.10 复现通道（写下来，别只留在这轮会话里）：
+
+```bash
+uv python install 3.10 && uv venv --python 3.10 "$TEMP/fgpy310"
+uv pip install -p "$TEMP/fgpy310/Scripts/python.exe" "pytest==9.1.1"
+# tests/conftest.py 需要 cv2 / numpy / PIL，单文件复现用 --noconftest 绕开
+"$TEMP/fgpy310/Scripts/python.exe" -m pytest tests/test_ci_push_gh_pages.py --noconftest -q
+```
+
+### 11.5 远端终验
+
+- 判据：新 CI run 的 **12 条腿全绿**，且 `extras` 与 `e2e` 由 skipped 变**真实执行并 success**
+  （它们只因 test 腿红而被连带跳过，本轮是它们在新配置下的首次真实执行机会）。
+- 结果：（推送后回填 run id / event / 结论）。
+- 遗留：① `schedule` 分支的 gh-pages 推送在新工具下尚无样本，下一轮 nightly 才是首验；
+  ② `tools/ci/push_gh_pages.py::_git` 用 `text=True` 未显式给 `encoding`（`errors="replace"`
+  故不崩，只在非 ASCII git 诊断上 mojibake，且该脚本只在 ubuntu/py3.12 跑）→ 记录不动；
+  ③ `tools/ci/` 不在 mypy 的 `files = [flashgaze, tests, tools/bench]` 内 → 无类型门禁；
+  ④ 11-05 的 Benchmark 趋势点已永久缺失，gh-pages 图表留洞；⑤ Codecov token 仍缺（仓库设置项）。

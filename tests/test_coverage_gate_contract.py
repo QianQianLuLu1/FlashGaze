@@ -26,6 +26,10 @@
   一版，静态 job 变红时无法排除版本因素）；pytest 与 pytest-benchmark 同样
   钉死，且 pytest 不得钉在已知会打死 benchmark fixture 的版本上（区间式让
   nightly 在无人改代码时换掉测试引擎，见 pitfalls §3.14）。
+- ``tests/**/*.py``：不得把补丁打到 **stdlib 模块的私有符号**（``_`` 开头的名字）上。
+  私有符号的存在性随小版本变化，矩阵下限（3.10）之外的腿测不出这种依赖；
+  且符号名作为 ``setattr`` 的字符串实参出现时 mypy 完全失明（``python_version=3.10``
+  拦不住），只有真正跑在 3.10 上才判红（CI run 42188510332 的三条 py3.10 腿）。
 
 改门槛、改 omit、改 CI 门禁结构时，必须同步更新本测试与 README
 「覆盖率门禁」小节、docs/extras-governance.md 的口径。
@@ -33,9 +37,11 @@
 
 from __future__ import annotations
 
+import ast
 import configparser
 import json
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -53,6 +59,7 @@ BENCHMARK_YML = WORKFLOWS_DIR / "benchmark.yml"
 RELEASE_YML = WORKFLOWS_DIR / "release.yml"
 TOOLS_EXTRAS_HEALTH = REPO_ROOT / "tools" / "extras_health.py"
 HYBRID_SCORER_PY = REPO_ROOT / "flashgaze" / "core" / "hybrid_scorer.py"
+TESTS_DIR = REPO_ROOT / "tests"
 
 # rhysd/github-action-benchmark 没有这两个入参（该 action 唯一的 required 入参是
 # output-file-path）。写了不会报错、只会被静默忽略，所以必须由契约测试钉住。
@@ -902,6 +909,116 @@ def test_hybrid_scorer_keeps_heavy_optional_hosts_out_of_module_level() -> None:
         "        from flashgaze.core.deduplicator import Deduplicator\n"
     )
     assert _module_level_host_imports(allowed) == [], "把函数体内导入误判成模块级导入"
+
+
+def _private_stdlib_patch_targets(source: str) -> list[str]:
+    """列出「把补丁打到 stdlib 模块私有符号上」的位置，形如 ``3: subprocess._text_encoding``。
+
+    只认**补丁目标**（``setattr`` / ``delattr`` 的第二实参，或 monkeypatch 的字符串形式），
+    不认读取：``argparse._StoreTrueAction`` 这类 isinstance 用法是另一类、风险更低的问题，
+    一并拦会把既有绿测试打成红。项目模块（``hs`` / ``cvm`` 等）的私有属性是合法测试桩，
+    必须先按 import 根名与 ``sys.stdlib_module_names`` 取交集才能判定归属。
+    """
+    tree = ast.parse(source)
+    bindings: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                bindings[alias.asname or alias.name.split(".")[0]] = alias.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            root = node.module.split(".")[0]
+            for alias in node.names:
+                bindings[alias.asname or alias.name] = root
+    stdlib_names = {name for name, root in bindings.items() if root in sys.stdlib_module_names}
+
+    offenders: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not node.args:
+            continue
+        func = node.func
+        call_name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        if call_name not in {"setattr", "delattr"}:
+            continue
+        target, *rest = node.args
+        attr = rest[0] if rest else None
+        if isinstance(target, ast.Name) and target.id in stdlib_names:
+            if (
+                isinstance(attr, ast.Constant)
+                and isinstance(attr.value, str)
+                and attr.value.startswith("_")
+            ):
+                offenders.append(f"{node.lineno}: {target.id}.{attr.value}")
+            continue
+        # 字符串形式（``monkeypatch.setattr("subprocess._text_encoding", ...)``）：mypy 对这一
+        # 形态完全失明，必须在这里补上，否则守卫只挡住了我们看得见的那一半。
+        if isinstance(target, ast.Constant) and isinstance(target.value, str):
+            dotted = target.value
+            head, _, tail = dotted.rpartition(".")
+            if head.split(".")[0] in stdlib_names and tail.startswith("_"):
+                offenders.append(f"{node.lineno}: {dotted}")
+    return offenders
+
+
+def test_no_test_patches_private_stdlib_api() -> None:
+    """tests/ 不得把补丁打到 stdlib 模块的私有符号上。
+
+    回归实证（CI run 42188510332 = ``687756c``）：`tests/test_ci_push_gh_pages.py` 用
+    ``monkeypatch.setattr(subprocess, "_text_encoding", ...)`` 模拟非 UTF-8 runner，
+    而 ``subprocess._text_encoding`` 是 **3.11 才有的私有函数**——三条 py3.10 腿
+    （ubuntu / macos / windows）同时 ``AttributeError`` 判红，其余 9 条腿与 ruff/mypy 全绿。
+    两个失明原因叠在一起：① 开发机与 9 条腿都在 3.11+，这是矩阵下限专属的缺陷；
+    ② 符号名是 ``setattr`` 的字符串实参而非属性访问，``mypy --python-version 3.10`` 看不见。
+    同族教训是 §3.9（`time.sleep(1e9)` 在 py3.10 Win/macOS 立即抛错）与 §3.14（上游 pytest
+    9.2.0 删私有 ``_nodeid`` 打死 pytest-benchmark）——上一轮我们为别人删掉的私有符号买单，
+    这一轮我们自己又造了一个。
+    """
+    test_files = sorted(TESTS_DIR.rglob("*.py"))
+    # 扫描自身不能恒真：TESTS_DIR 写错会让 rglob 返回空清单，守卫就变成一盏永远绿的灯。
+    # 44 = 实测值（tests/ 顶层 42 + tests/e2e 2），留 4 个的余量给文件合并，不给路径失效留活路。
+    assert len(test_files) >= 40, f"只扫到 {len(test_files)} 个测试文件——TESTS_DIR 路径失效"
+
+    offenders = [
+        f"{path.relative_to(REPO_ROOT).as_posix()} → {hit}"
+        for path in test_files
+        for hit in _private_stdlib_patch_targets(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], (
+        "测试把补丁打到了 stdlib 私有符号上：这类符号的存在性随小版本变化，"
+        "只在矩阵最低版本腿上判红（开发机恒绿）。请改用公开入参或公开 API 表达同一契约"
+        "（本轮的替代形态见 tests/test_ci_push_gh_pages.py 的 _run(encoding=...)）："
+        f"{'; '.join(offenders)}"
+    )
+
+    # 反例一（对象形式）：改动前的形态必须被抓到，否则本守卫形同虚设。
+    object_form = (
+        "import subprocess\n"
+        "def test_x(monkeypatch):\n"
+        '    monkeypatch.setattr(subprocess, "_text_encoding", lambda *a: "cp1252")\n'
+    )
+    assert _private_stdlib_patch_targets(object_form) == ["3: subprocess._text_encoding"], (
+        "反例未被识别——本守卫看不见 setattr(模块名, 私有符号) 这一形态"
+    )
+
+    # 反例二（字符串形式）：mypy 看不见的那一半，必须由本守卫兜住。
+    string_form = (
+        "import subprocess\n"
+        "def test_x(monkeypatch):\n"
+        '    monkeypatch.setattr("subprocess._text_encoding", lambda *a: "cp1252")\n'
+    )
+    assert _private_stdlib_patch_targets(string_form) == ["3: subprocess._text_encoding"], (
+        "反例未被识别——monkeypatch 的字符串目标形态漏检"
+    )
+
+    # 误报对照：项目模块（flashgaze.core.hybrid_scorer 的别名 hs）的私有属性是仓库里
+    # 大量存在的合法测试桩，把它判红等于把既有绿测试全打成红灯。
+    allowed = (
+        "import pytest\n"
+        "def test_x(monkeypatch, hs):\n"
+        '    monkeypatch.setattr(hs, "_evaluate_cv_and_portrait", lambda *a: None)\n'
+    )
+    assert _private_stdlib_patch_targets(allowed) == [], (
+        "把项目模块的私有属性误判成 stdlib 私有符号——守卫范围过宽"
+    )
 
 
 if __name__ == "__main__":

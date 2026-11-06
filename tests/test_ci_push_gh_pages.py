@@ -366,36 +366,55 @@ def test_extras_health_workflow_uses_shared_push_tool() -> None:
     _assert_workflow_uses_tool("extras-health.yml")
 
 
+# 反向那一半会真的让 reader 线程抛 UnicodeDecodeError —— 那正是被证明的机制本身，
+# 不是待修的缺陷；不显式忽略的话，将来 filterwarnings 收紧成 error 会把这条用例打红。
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_tool_output_decoded_as_utf8_on_non_utf8_runner(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, clean_env: dict[str, str]
+    tmp_path: Path, clean_env: dict[str, str]
 ) -> None:
-    """Windows runner 的 ACP 是 cp1252：按 locale 解码会失败，reader 线程吞错后 stderr 变 None。
+    """脚本输出必须显式按 UTF-8 解码：runner 的 ACP 是 cp1252，按它解码会整段丢诊断。
 
-    本地复现靠替换 subprocess 的 `_text_encoding`，不依赖机器语言设置。
+    下面两个 run 号是这条用例的存在理由：
+
+    - **42185258304**（windows 三腿）：`_run` 未显式给 `encoding`，父进程按 runner ACP
+      （cp1252）解 UTF-8 中文 → reader 线程抛 `UnicodeDecodeError` 被吞 → `stderr` 静默变
+      `None` → 用例报 `TypeError: can only concatenate str (not "NoneType")`。开发机 ACP
+      恰好是 UTF-8，本地恒绿。
+    - **42188510332**（py3.10 三腿）：上一轮为复现上面这条链，改用
+      `monkeypatch.setattr(subprocess, "_text_encoding", ...)`，而那是 **3.11 才有的私有
+      函数**（矩阵下限是 3.10）——三腿 `AttributeError`；且 `_run` 已写死 `encoding`，
+      subprocess 的默认文本编码根本不参与，这条用例在 3.11+ 还是恒真的。
+
+    现在改成走 `_run` 已有的公开 `encoding` 参数：先用 cp1252 解码证明机制真的会咬人
+    （非空洞性凭证，纯 Python 层行为，与机器语言设置无关，12 腿一致），再证明默认路径
+    按 UTF-8 解码才拿得到诊断。不碰任何 stdlib 内部符号。
     """
-    monkeypatch.setattr(subprocess, "_text_encoding", lambda *args, **kwargs: "cp1252")
     _, work = _init_pair(tmp_path)
+    cmd = [
+        sys.executable,
+        str(TOOL),
+        "--repo",
+        str(work),
+        "--branch",
+        "gh-pages",
+        "--backoff-base",
+        "0",
+        "--attempts",
+        "0",
+    ]
 
-    result = _run(
-        [
-            sys.executable,
-            str(TOOL),
-            "--repo",
-            str(work),
-            "--branch",
-            "gh-pages",
-            "--backoff-base",
-            "0",
-            "--attempts",
-            "0",
-        ],
-        REPO_ROOT,
-        env=clean_env,
-        check=False,
+    # 反向：模拟 runner 的 ACP 解码（cp1252 里 0x8F / 0x9D 是未定义位），诊断整段丢失。
+    broken = _run(cmd, REPO_ROOT, env=clean_env, check=False, encoding="cp1252")
+    assert broken.returncode == 2
+    assert "参数非法" not in (broken.stdout or "") + (broken.stderr or ""), (
+        "按 cp1252 解码居然拿到了完整中文——本用例的非空洞性前提失效（子进程输出编码变了？），"
+        "正向断言也随之失去意义"
     )
 
-    assert result.returncode == 2
-    assert "参数非法" in (result.stdout or "") + (result.stderr or "")
+    # 正向：`_run` 默认显式 UTF-8，诊断完整可读。
+    ok = _run(cmd, REPO_ROOT, env=clean_env, check=False)
+    assert ok.returncode == 2
+    assert "参数非法" in ok.stdout + ok.stderr
 
 
 def test_tool_source_has_no_shallow_fetch() -> None:

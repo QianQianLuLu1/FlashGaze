@@ -305,3 +305,46 @@ Neumaier 补偿求和，3.10/3.11 仍是朴素左折叠；叠加两次归一化�
   5. 残留的不对称：`pytest-cov>=4.1.0,<8` 仍浮动（本轮不扩大改动面），见 §3.7 / §3.8 同族口径。
 
 
+## 3.15 测试把补丁打到 stdlib 私有符号 = 只有矩阵最低版本腿才红（`subprocess._text_encoding`）
+
+- **事实**：`tests/test_ci_push_gh_pages.py` 为复现「runner 的 ACP 不是 UTF-8」写了
+  `monkeypatch.setattr(subprocess, "_text_encoding", lambda *a: "cp1252")`。
+  `subprocess._text_encoding` 是 **Python 3.11 才引入的私有函数**（3.11/3.12 实测存在，
+  实现为 `locale.getencoding()`；3.10 的 `subprocess.py` 里没有这个名字），而本仓
+  `requires-python = ">=3.10"`、CI 矩阵含 3.10 三条腿。`monkeypatch.setattr` 默认
+  `raising=True`，属性不存在即抛 `AttributeError` → 用例在 **setup 阶段**就炸。
+- **后果**：CI run **42188510332**（push、`687756c`）三条 py3.10 腿（ubuntu / macos /
+  windows）同时判红，其余 9 条腿与 `ruff` / `mypy` / `agents-md-integrity` 全绿；
+  `extras` 与 `e2e` 三个 job 因 test job 未过而 **skipped（不是绿）**。这条红是
+  §4.13 那一轮修复**自己带进来的**，与被修的问题无关。
+- **第二层缺陷比第一层更值得记**：这条用例在 3.11+ **本来就是恒真的**——同文件的 `_run`
+  已经写死 `encoding="utf-8"`，`subprocess` 的「默认文本编码」那条路径根本不被走，
+  补丁打在一个不参与行为的私有符号上。也就是说：即便 3.10 不炸，它也没有在测任何东西。
+  「红灯换来了一个恒真的绿」是比 AttributeError 更贵的代价。
+- **为什么两道静态门禁都拦不住**：`mypy strict` 配 `python_version="3.10"`，确实会在
+  **属性访问**形态（`subprocess._text_encoding`）上报「Module has no attribute」；但这里
+  符号名是 `setattr` 的**字符串实参**，mypy 无从求值。ruff 的默认规则集不含 SLF001
+  （私有成员访问），且 `target-version="py310"` 只管语法层，不管 stdlib 符号的存在性。
+  结论：**这类缺陷在本地与静态门禁两侧都是隐形的，只有真跑在 3.10 上才现形**。
+- **与 §3.9 / §3.14 同族**：§3.9 是 `time.sleep(1e9)` 在 py3.10 Win/macOS 立即抛错；
+  §3.14 是上游 pytest 9.2.0 删私有 `_nodeid` 打死 pytest-benchmark。本轮的位置很尴尬：
+  **上一轮我们刚为别人删掉的私有符号买单并写了一条契约，这一轮我们自己造了一个同形状的**。
+- **修法**（生产代码、workflow、阈值、矩阵一条未动）：删掉私有符号补丁，改走 `_run`
+  已有的公开 `encoding` 参数做**双向断言**——① `encoding="cp1252"` 时中文诊断整段丢失
+  （非空洞性凭证：reader 线程抛 `UnicodeDecodeError` 被吞、`stderr` 变 `None`；纯 Python 层
+  机制，与机器语言设置无关，故 12 腿行为一致）；② 默认（显式 UTF-8）时诊断完整。
+  变异复核：把 `_run` 默认改成 `"cp1252"` → 该用例立刻以 **CI 原始签名**
+  （`TypeError: can only concatenate str (not "NoneType")`）判红，证明它真的在测契约。
+- **一般化**：
+  1. **测试桩只允许打在公开入参 / 公开 API 上**。以字符串形式出现在 `setattr` /
+     `delattr` 里的 stdlib 私有符号（`_` 开头）没有兼容性承诺，其存在性随小版本变化。
+     常驻守卫：`test_coverage_gate_contract.py::test_no_test_patches_private_stdlib_api`
+     （AST 扫 `tests/**/*.py`，含「合成反例必被抓」「项目模块私有属性不得误报」两向对照）。
+  2. **不要用 `raising=False` 修这条**——那只是把 `AttributeError` 红灯换成一条静默恒真的
+     用例，正是本条要拦的形态。宁可改成不打补丁的公开入参表达。
+  3. 声明支持 3.10，就有义务在推送前拿一个真 3.10 解释器跑过改动到的测试文件
+     （本机 `uv venv --python 3.10` + `pytest --noconftest` 单文件，成本 <20s）。
+     12 腿矩阵是**发现**通道，不是**验证**通道：它的反馈延迟是一整轮 CI。
+  4. 范围边界须写清：守卫只拦**补丁目标**，不拦 `argparse._StoreTrueAction` 这类**读取**
+     （`tests/test_cli_parser.py`，3.10–3.13 均存在）。想一次扩大成「禁止一切私有符号」
+     会把既有绿测试全打成红，属于用范围掩盖判断。
