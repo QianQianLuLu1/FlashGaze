@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793954041580,
+  "lastUpdate": 1793958742614,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -2010,6 +2010,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000059379877770584975",
             "extra": "mean: 487.72420000346983 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "37d7b7f081c75c4d71cb3aac30067ec8b5143841",
+          "message": "fix(ci): 拆掉 3.11+ 才有的私有符号补丁，收掉 §4.13 遗留的 py3.10 三腿红灯\n\nCI run 42188510332（push、687756c）19 个 job 里 3 条 py3.10 腿红在 step 5，唯一失败用例\ntest_tool_output_decoded_as_utf8_on_non_utf8_runner：monkeypatch.setattr(subprocess,\n\"_text_encoding\", ...) 打的是 3.11 才引入的私有函数（本仓 requires-python >=3.10），\nraising=True 下属性不存在即在 setup 期抛 AttributeError。逐腿 job 日志确认失败面精确到\n每腿各 1 个用例（1 failed, 1069 passed, 29 skipped, 28 deselected），无其他被掩住的 3.10 缺陷。\n\n第二层缺陷比第一层更贵：这条用例在 3.11+ 本来就不参与任何行为——同文件 _run 已写死\nencoding=\"utf-8\"，subprocess 的默认文本编码路径根本不被走，上一轮把一个红灯换成了一条\n恒真的绿。两道静态门禁放行各有原因：mypy strict（python_version=3.10）只拦属性访问形态，\n这里符号名是 setattr 的字符串实参；ruff 的 target-version 只管语法层。\n\n修（生产代码 / workflow / 阈值 / 矩阵 / 超时预算一条未动）：\n- 用例改走 _run 已有的公开 encoding 参数做双向断言：cp1252 时诊断整段丢失（非空洞性凭证，\n  纯 Python 层机制，12 腿一致）、默认显式 UTF-8 时诊断完整。反向那半会真的产生 reader 线程\n  异常，故显式 filterwarnings 忽略，免得将来收紧成 error 时把这条用例打红。\n- test_coverage_gate_contract.py 19→20 条：新增 test_no_test_patches_private_stdlib_api\n  （AST 扫 tests/，import 根名 ∩ sys.stdlib_module_names，对象与字符串两种形态都拦），\n  三向自证 = 真实扫描先红后绿、合成反例必被抓、项目模块私有属性不得误报，另加\n  len(test_files) >= 40 的扫描非空洞性前置（TESTS_DIR 写错会让守卫变成一盏永远绿的灯）。\n- 否决的改法：raising=False（把红换成静默恒真）、skipif 或把该文件从 3.10 腿摘掉\n  （用「不测」冒充「修好」）。\n\n同轮用只读 /actions/jobs/{id}/logs（凭据取自本机 git credential helper，未落盘、未改配置）\n拿到 11-05 nightly job 127600884450 完整日志，把 §4.13 的四条缺陷从「引用」升级为「实测」：\nremote: fatal error in commit_refs_rules → --depth=50 致 skipped previously applied commit\nc3ab8cf + Rebasing (1/15) → Committer identity unknown → 误报「rebase 冲突」→ rc=1。\n内容冲突从未发生；「下一轮自愈」也是假的——gh-pages 上 11-05 的 Benchmark 提交永久缺失。\n\n本地证据：CPython 3.10.20 真机 --noconftest 单文件 修复前 1 failed / 15 passed → 修复后\n16 passed；3.11.16 与 3.12.10 各 16 passed；变异复核（把 _run 默认编码改成 cp1252）以 CI\n原始签名 TypeError: can only concatenate str (not \"NoneType\") 判红、还原后转绿且 git diff 无残留。\n全量 1076 passed / 29 skipped / 38 deselected、覆盖率 90.49% >= 80；ruff check /\nformat --check（103 files）/ mypy 两面（82 files）/ check_agents_md 全绿。\n须 CI 终验：三条 py3.10 腿在完整矩阵下的结果，以及首次真实执行的 extras 与 e2e。\n\n§3 新增 3.15、§4 新增 4.14、§6 契约条数改口；取证见 fixes.md §4.14 与 docs/ci-fix-plan.md §11。",
+          "timestamp": "2026-11-06T17:48:12+08:00",
+          "tree_id": "97bda953af0f78e8a44a93d8ba08a5cf90dbc450",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/37d7b7f081c75c4d71cb3aac30067ec8b5143841"
+        },
+        "date": 1793958742001,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 11.856555830594822,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002449691627052772",
+            "extra": "mean: 84.34152499999925 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 12.936730582390027,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0014047383418623336",
+            "extra": "mean: 77.29928312499901 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 203.1248575745353,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009370401832458967",
+            "extra": "mean: 4.923080375000666 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2387.330951295287,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015594060867351456",
+            "extra": "mean: 418.8778264938228 usec\nrounds: 1389"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 21.48458504119157,
+            "unit": "iter/sec",
+            "range": "stddev: 0.007157678019853398",
+            "extra": "mean: 46.54499950000144 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 45.95012202274818,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004765658098581343",
+            "extra": "mean: 21.76272784444267 msec\nrounds: 45"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 94.85995869665307,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003114666927082565",
+            "extra": "mean: 10.54185573913056 msec\nrounds: 92"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1526.8534588679122,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012892413137587017",
+            "extra": "mean: 654.9416999988011 usec\nrounds: 10"
           }
         ]
       }
