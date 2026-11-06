@@ -576,8 +576,9 @@ ubuntu py3.10 job 127794496252 日志逐字：`= 1 failed, 1069 passed, 29 skipp
 ### 11.3 修法（生产代码 / workflow / 阈值 / 矩阵 / 超时预算一条未动）
 
 - `tests/test_ci_push_gh_pages.py`：删掉私有符号补丁，改走 `_run` **已有的公开 `encoding` 参数**
-  做双向断言——① `encoding="cp1252"` 时中文诊断整段丢失（非空洞性凭证；纯 Python 层机制，
-  与机器语言设置无关，12 腿一致）；② 默认（显式 UTF-8）时诊断完整。（**这一版自己在 POSIX 上二次翻车，终态见 11.7**）
+  做双向断言——① `encoding="cp1252"` 时中文诊断整段丢失、② 默认（显式 UTF-8）时诊断完整。
+  **当时以为**这是「纯 Python 层机制、与机器语言设置无关，12 腿一致」——那句已被 run 42198208112
+  证伪（POSIX 在主线程抛 `UnicodeDecodeError`、Windows 才吞成 `None`），二次翻车与终态见 11.7
   反向那半会真的产生 reader 线程异常，故加
   `@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")`
   显式声明「这是被证明的机制本身」，避免将来 `filterwarnings` 收紧成 error 时把它打红。
