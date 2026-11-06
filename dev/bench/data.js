@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793962181523,
+  "lastUpdate": 1793962459488,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -2244,6 +2244,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001284884328111565",
             "extra": "mean: 650.1322000048049 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "5232bbebbba77e78d9f135f2b31e6988b2511cb2",
+          "message": "docs(ci): 记下本机 pip-audit 与 CI 门禁环境的口径差，别把缓存读成漏洞暴露\n\n本轮零依赖变更（git diff 只有 tests/ 与 docs/），但本机 python -m pip_audit 报 14 个包命中\n通告。逐条比对：唯一落在运行时依赖上的是 pillow 12.2.0（修复线 12.3.0），而 PyPI 现在解析到\n13.0.0（约束 Pillow>=10,<14），CI 的 pip install -e . 装的是已修复版本 —— Security workflow\n的 success 是真的；mcp 1.29.0 属 extras，主扫描环境不装；其余（virtualenv / werkzeug /\nsetuptools / pip / aiohttp / msgpack …）来自本机额外装的工具链，都不在门禁环境里。\n\n提醒的根据是仓库自身口径：make install 不装 -e .（AGENTS.md §5），开发机依赖树与 CI 门禁\n环境本就不是同一份。要复现门禁得新建干净 venv 只跑 pip install -e .。豁免单\nPIP_AUDIT_IGNORE 仍为空，无需登记。\n\n新增 docs/ci-fix-plan.md §11.6（原 §11.6 二次翻车顺延为 §11.7，交叉引用同步改）。",
+          "timestamp": "2026-11-06T18:50:13+08:00",
+          "tree_id": "88e439cd3d5e636d5c029c194f39d1e218d435d7",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/5232bbebbba77e78d9f135f2b31e6988b2511cb2"
+        },
+        "date": 1793962458861,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 12.238204460573236,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0013318947479556676",
+            "extra": "mean: 81.71133300000122 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.48495606670429,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002055268918389679",
+            "extra": "mean: 74.15671174999972 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 212.42820789551465,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017429851389556124",
+            "extra": "mean: 4.707472750002495 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2460.2158639841964,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012952952944892119",
+            "extra": "mean: 406.46839760660276 usec\nrounds: 1504"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 22.720796422443886,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006713198315570093",
+            "extra": "mean: 44.01254169999902 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 46.429455856786674,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005296503213732334",
+            "extra": "mean: 21.538051255318088 msec\nrounds: 47"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 97.99803948743786,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010982690603740519",
+            "extra": "mean: 10.204285771739215 msec\nrounds: 92"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1499.7796823621823,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002126436724917852",
+            "extra": "mean: 666.7646000011018 usec\nrounds: 10"
           }
         ]
       }
