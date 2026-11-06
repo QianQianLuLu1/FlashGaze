@@ -545,12 +545,17 @@
   main；② CI run 42182164636 的 lint job 报 `EXE001`：`tools/*.py` 带了 shebang，而
   NTFS 没有 exec 位语义、Windows 本地恒不报（pitfalls §3.8 早有口径）；③ 同 run 的
   windows 三腿在 `test_invalid_arguments_exit_2_without_side_effects` 判红：runner 控制台
-  是 cp1252，`sys.stderr` 的 backslashreplace 把中文诊断写成 `\u53c2\u6570…`。
+  是 cp1252，`sys.stderr` 的 backslashreplace 把中文诊断写成 `\u53c2\u6570…`；
+  **第二次推送（`b192548`）windows 三腿仍红**，但换成了更隐蔽的形态：测试辅助函数按
+  locale 解码子进程输出，cp1252 解 UTF-8 字节在 reader 线程抛 `UnicodeDecodeError` 后被
+  吞掉，`stderr` 静默变成 `None`（本地 ACP 恰好是 UTF-8，所以永远绿）。
   修法：脚本在目标分支未检出时 `git switch` 过去、结束后切回；去掉 shebang（调用方本就
-  显式 `python <path>`）；启动时把 stdout/stderr 固定为 UTF-8。三条新用例
-  （`test_head_on_other_branch_still_pushes_target_branch`、
-  `test_tool_source_has_no_shebang`、`test_diagnostics_survive_non_utf8_console`）
-  逐条先红灯再转绿，`tests/test_ci_push_gh_pages.py` 15 条全绿；`tests/` 全量
-  **1074 passed / 29 skipped / 38 deselected**。
+  显式 `python <path>`）；脚本启动时把 stdout/stderr 固定为 UTF-8；测试侧 `_run` 统一
+  按 UTF-8 解码。四条新用例（`test_head_on_other_branch_still_pushes_target_branch`、
+  `test_tool_source_has_no_shebang`、`test_diagnostics_survive_non_utf8_console`、
+  `test_tool_output_decoded_as_utf8_on_non_utf8_runner`，最后一条用替换
+  `subprocess._text_encoding` 稳定复现 cp1252 runner）逐条先红灯再转绿，
+  `tests/test_ci_push_gh_pages.py` 16 条全绿；`tests/` 全量
+  **1075 passed / 29 skipped / 38 deselected**。
 
 

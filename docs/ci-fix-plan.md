@@ -472,7 +472,7 @@ pip-audit --strict -r requirements-dev.txt   # 与 report-only 步骤同款
 | 文件 | 变更 |
 |---|---|
 | `tools/ci/push_gh_pages.py` | 新增：参数校验、完整 fetch、显式提交身份、失败分类、有界退避、`ls-remote` 回验 |
-| `tests/test_ci_push_gh_pages.py` | 新增 15 条行为/契约测试 |
+| `tests/test_ci_push_gh_pages.py` | 新增 16 条行为/契约测试 |
 | `.github/workflows/benchmark.yml` | step 13 改为调用共享脚本；删除内联重试与 `--depth=50` |
 | `.github/workflows/extras-health.yml` | charts step 改为调用共享脚本；charts job 补 `setup-python@v6 (3.12)`；sentinel 的 `--depth=50` 改为完整 fetch + ancestor 判定 |
 | `docs/agent-context/fixes.md` | 新增 §4.13 事故记录 |
@@ -498,13 +498,14 @@ pip-audit --strict -r requirements-dev.txt   # 与 report-only 步骤同款
 | `test_head_on_other_branch_still_pushes_target_branch` | 失败（`当前分支 'main' 不是目标分支 'gh-pages'`，复现 CI run 42182164644） | 通过（远端 gh-pages 更新，结束后 HEAD 切回 main） |
 | `test_tool_source_has_no_shebang` | 失败（文件以 `#!` 开头，复现 CI run 42182164636 的 `EXE001`） | 通过 |
 | `test_diagnostics_survive_non_utf8_console` | 失败（`\u53c2\u6570\u975e\u6cd5` 转义串，复现 windows 三腿判红） | 通过（`PYTHONIOENCODING=cp1252` 下仍是可读中文） |
+| `test_tool_output_decoded_as_utf8_on_non_utf8_runner` | 失败（`stderr` 为 `None`：替换 `subprocess._text_encoding` 为 cp1252，复现二次推送后 windows 三腿判红） | 通过（测试侧统一按 UTF-8 解码） |
 
 首轮红灯阶段实跑结果：**11 failed / 0 passed**；转绿后：**12 passed**。
-推送后 CI 反证暴露 3 条本地测不到的缺陷，逐条补红灯（1 / 1 / 1 failed）后修复，现 **15 passed**。
+推送后 CI 反证暴露 4 条本地测不到的缺陷，逐条补红灯（1 / 1 / 1 / 1 failed）后修复，现 **16 passed**。
 
 ### 10.3 回归与全局校验（本机实测）
 
-- `python -m pytest tests/ -q`：变更前连续两次 **1059 passed / 29 skipped / 38 deselected**；首轮变更后 **1071 passed**（453s，+12 条新增）；二次修复后 **1074 passed / 29 skipped / 38 deselected**（447.80s，+15 条新增），无新增失败。
+- `python -m pytest tests/ -q`：变更前连续两次 **1059 passed / 29 skipped / 38 deselected**；首轮变更后 **1071 passed**（453s，+12 条新增）；二次修复后 **1074 passed**（447.80s，+15 条新增）；三次修复后 **1075 passed / 29 skipped / 38 deselected**，无新增失败。
 - `python -m pytest tests/ -q -o addopts=`（首轮变更后）：**1109 passed / 29 skipped**。
 - `python -m pytest benchmarks/ -m "not bench_full" --benchmark-disable-gc`：**8 passed / 1 deselected**（5.59s）。
 - `python -m ruff check .`、`python -m ruff format --check .`：通过（103 files）。
@@ -517,7 +518,7 @@ pip-audit --strict -r requirements-dev.txt   # 与 report-only 步骤同款
 ### 10.4 推送与 CI 终验
 
 - 推送方式：直接 `git push origin main`（用户已定），凭据用本机 git credential 里已有的。
-- 首推 `052d77b`（2026-11-06T07:38Z）后新触发的两条运行，都成为新的反证：
+- 首推 `052d77b`（2026-11-06T07:38:05Z）后新触发的两条运行，都成为新的反证：
   - **Benchmark** run **42182164644**（event=`push`）：step 13 在 40ms 内退出 1，
     日志 `push-gh-pages: 当前分支 'main' 不是目标分支 'gh-pages'`。根因是我们的脚本
     要求 HEAD 在目标分支，而 `github-action-benchmark` 提交完 gh-pages 会 `git checkout -`
@@ -526,7 +527,13 @@ pip-audit --strict -r requirements-dev.txt   # 与 report-only 步骤同款
     NTFS 无 exec 位语义，本地 ruff 恒不报，pitfalls §3.8 早有口径），windows 三腿
     在 `test_invalid_arguments_exit_2_without_side_effects` 判红（cp1252 控制台把中文诊断
     写成 `\uXXXX` 转义串）；ubuntu / macos 腿全绿，说明是平台语义差异而非逻辑错误。
-- 二次修复（逐条先红灯再转绿，见 10.2 后 3 行）：脚本按需 `git switch` 目标分支并在结束时切回、
-  去掉 shebang、启动时把 stdout/stderr 固定为 UTF-8。
-- 最终 CI 结论：（下一提交推送后回填 run id / event / 结论）。
+- 二推 `b192548`（08:05:59Z）：**Benchmark 42185258348 转绿**（gh-pages push 成功；
+  说明「按需切分支」修复生效），**CI 42185258304 仍红**——`ruff` 已绿，但 windows 三腿
+  换成了更隐蔽的形态：runner 的 ACP 是 cp1252，测试辅助函数按 locale 解码子进程输出，
+  reader 线程里的 `UnicodeDecodeError` 被吞掉后 `stderr` 静默变成 `None`；本机 ACP 恰好
+  是 UTF-8，所以本地永远绿。
+- 三次修复（逐条先红灯再转绿，见 10.2 最后 4 行）：脚本按需 `git switch` 目标分支并在
+  结束时切回、去掉 shebang、启动时把 stdout/stderr 固定为 UTF-8；测试侧 `_run` 统一按
+  UTF-8 解码。红灯复现改用替换 `subprocess._text_encoding`，不再依赖机器语言设置。
+- 最终 CI 结论：（本次提交推送后回填 run id / event / 结论）。
 

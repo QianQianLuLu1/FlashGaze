@@ -24,8 +24,10 @@ def _run(
     cwd: Path,
     env: dict[str, str] | None = None,
     check: bool = True,
-    encoding: str | None = None,
+    encoding: str | None = "utf-8",
 ) -> subprocess.CompletedProcess[str]:
+    # 输出统一按 UTF-8 读：runner 的 ACP 不是 UTF-8 时，按 locale 解码会在 reader
+    # 线程里抛 UnicodeDecodeError 并被吞掉，stderr 静默变成 None。
     result = subprocess.run(
         args, cwd=cwd, env=env, capture_output=True, text=True, encoding=encoding, check=False
     )
@@ -131,7 +133,6 @@ def _run_tool(
         REPO_ROOT,
         env=env,
         check=False,
-        encoding="utf-8",
     )
 
 
@@ -365,6 +366,38 @@ def test_extras_health_workflow_uses_shared_push_tool() -> None:
     _assert_workflow_uses_tool("extras-health.yml")
 
 
+def test_tool_output_decoded_as_utf8_on_non_utf8_runner(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, clean_env: dict[str, str]
+) -> None:
+    """Windows runner 的 ACP 是 cp1252：按 locale 解码会失败，reader 线程吞错后 stderr 变 None。
+
+    本地复现靠替换 subprocess 的 `_text_encoding`，不依赖机器语言设置。
+    """
+    monkeypatch.setattr(subprocess, "_text_encoding", lambda *args, **kwargs: "cp1252")
+    _, work = _init_pair(tmp_path)
+
+    result = _run(
+        [
+            sys.executable,
+            str(TOOL),
+            "--repo",
+            str(work),
+            "--branch",
+            "gh-pages",
+            "--backoff-base",
+            "0",
+            "--attempts",
+            "0",
+        ],
+        REPO_ROOT,
+        env=clean_env,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "参数非法" in (result.stdout or "") + (result.stderr or "")
+
+
 def test_tool_source_has_no_shallow_fetch() -> None:
     source = TOOL.read_text(encoding="utf-8")
     assert "--depth" not in source
@@ -400,7 +433,6 @@ def test_diagnostics_survive_non_utf8_console(tmp_path: Path, clean_env: dict[st
         REPO_ROOT,
         env=env,
         check=False,
-        encoding="utf-8",
     )
 
     assert result.returncode == 2
