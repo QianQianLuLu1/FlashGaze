@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793962672924,
+  "lastUpdate": 1793964849034,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -2478,6 +2478,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00001912285856200613",
             "extra": "mean: 652.7194999996766 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "8d35cee54aa340a9a5abdb85f86b9ffbc058208f",
+          "message": "docs(ci): §11 补本轮的五项口径与 tip 运行结论，并说明那几条 cancelled 不是失败\n\n§1–§5 五项口径是为 gh-pages 那轮写的，第四轮（§11）此前只给了根因/修法/红绿表，读者要自己\n推断五项是否沿用。补 §11.0 逐条写死：依赖 0 新增（git diff 只有 tests/ 与 docs/）、启动与验证\n命令、错误处理（不动生产分支，被测工具的 rc=2 与四类分类语义保持；新增的是测试侧「解码失败在\nPOSIX 抛异常、在 Windows 返回 None」这一口径）、参数校验（复用 _run 的 encoding 入参，守卫无\n入参、不设白名单）、基础测试用例（指向 11.4 的正常/异常/边界三类红绿表）。\n\n另记录文档跟进提交的远端结果：8b1345d / 5232bbe / 50c4713 的 CI 因 concurrency.cancel-in-progress\n被后续推送取消 —— cancelled 不是 failure，是我连推文档的副作用；tip 475633d 的 CI run\n42206547889 = success（21 job，0 非绿）、Benchmark 42206548111 = success，gh-pages 推进到\nf8bef9a8。纯文档，无代码改动。",
+          "timestamp": "2026-11-06T19:30:30+08:00",
+          "tree_id": "41dc8503eb5832ad050b1b8dabe17a28a0274467",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/8d35cee54aa340a9a5abdb85f86b9ffbc058208f"
+        },
+        "date": 1793964848463,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 16.418619993535113,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002859007457802425",
+            "extra": "mean: 60.906458666669515 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 21.626227949725884,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0015092756066077185",
+            "extra": "mean: 46.2401488749995 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 395.22459996506234,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005461290921583367",
+            "extra": "mean: 2.5302068749981643 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 4531.402798551027,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001918544015953405",
+            "extra": "mean: 220.68221353435243 usec\nrounds: 2852"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 37.916568435898135,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0048244879903033095",
+            "extra": "mean: 26.373694699999106 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 91.41514515274068,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0012140805777730763",
+            "extra": "mean: 10.939106406593279 msec\nrounds: 91"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 184.61020801998635,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006366470238364362",
+            "extra": "mean: 5.41681855367249 msec\nrounds: 177"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 2675.4392536200303,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000006607409144013969",
+            "extra": "mean: 373.770399999529 usec\nrounds: 10"
           }
         ]
       }
