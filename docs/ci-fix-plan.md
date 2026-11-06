@@ -549,6 +549,26 @@ pip-audit --strict -r requirements-dev.txt   # 与 report-only 步骤同款
 
 ## 11. 第四轮：收掉 §10.4 遗留的 py3.10 三腿红灯（2026-11-06）
 
+### 11.0 本轮的五项口径（§1–§5 是为 gh-pages 那轮写的，本轮逐条说明是否沿用）
+
+- **依赖声明**：新增/变更依赖 **0 项**——`pyproject.toml` 与 `requirements-dev.txt` 一行未动
+  （`git diff --name-only 687756c..HEAD` 只有 `tests/` 与 `docs/`）。仅本机一次性工具链
+  `uv python install 3.10` + `uv venv` + `pytest==9.1.1`（不进仓库、不进 CI 路径、用完删除）。
+- **启动说明**：环境准备与验证命令见 11.4 末的复现块；全量口径仍是仓库真实存在的
+  `make check` / `make test` / `python -m pytest tests/ -q --cov=flashgaze`
+  （覆盖率门禁不在 `make test` 里，见 AGENTS.md §5）。
+- **错误处理**：不改任何生产分支。被测对象 `tools/ci/push_gh_pages.py` 的既有语义保持不变——
+  `_validate()` 非法入参走 rc=2、`_classify()` 四类（`fatal-auth` 不重试 / `transient`
+  与 `non-fast-forward` 有界退避 / `unknown` 重试）、失败落 `::error::` 并用 `ls-remote` 回验。
+  本轮新增的是**测试侧**的异常口径：解码失败在 POSIX 抛异常、在 Windows 返回 `None`，
+  所以断言降到字节层，两种形态都不再被依赖。
+- **参数校验**：不新增入参。用例复用 `_run` 已有的 `encoding: str | None = "utf-8"`；
+  新守卫无参数，扫描根来自 `REPO_ROOT / "tests"`，边界为非 `*.py` 不扫、
+  `sys.stdlib_module_names` 交集为空时返回空清单；判定为「一旦发现 stdlib 私有补丁目标即整体
+  判红」，不设白名单（白名单等于给下一次事故留门）。
+- **基础测试用例**：正常 / 异常 / 边界三类见 11.4 的逐条红绿表（含两条合成反例必须被守卫抓到、
+  一条项目模块对照不得误报、一条变异复核必须判红）。
+
 ### 11.1 失败面（逐腿用 job 日志确认，不靠推断）
 
 | run | event | sha | 结论 | 细节 |
@@ -631,6 +651,11 @@ uv pip install -p "$TEMP/fgpy310/Scripts/python.exe" "pytest==9.1.1"
 - 中间态如实保留：`37d7b7f` 的 CI run **42198208112** 是 failure（windows 四腿绿、
   ubuntu + macOS 八腿红，见 11.6）。它同时证明两件事：py3.10 的原始缺陷确已被第一版修好，
   而第一版的反向对照在 POSIX 上是另一种死法。
+- 文档跟进提交的运行结论（说明「纯文档提交没有把任何门禁搞红」，也解释 Actions 历史里那几条
+  cancelled）：`8b1345d` / `5232bbe` / `50c4713` 三次 CI 因 `concurrency.cancel-in-progress`
+  被后续推送取消（**cancelled 不是 failure**，是我连推文档的副作用）；
+  tip `475633d` 的 CI run **42206547889 = success**（21 job，0 非绿）、
+  Benchmark **42206548111 = success**，gh-pages 推进到 `f8bef9a8`。
 - 遗留：① `schedule` 分支的 gh-pages 推送在新工具下尚无样本，下一轮 nightly 才是首验；
   ② `tools/ci/push_gh_pages.py::_git` 用 `text=True` 未显式给 `encoding`（`errors="replace"`
   故不崩，只在非 ASCII git 诊断上 mojibake，且该脚本只在 ubuntu/py3.12 跑）→ 记录不动；
