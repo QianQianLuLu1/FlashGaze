@@ -640,3 +640,25 @@
   ASCII 片段，且该脚本只在 ubuntu/py3.12 跑）→ 记录不动；④ `tools/ci/` 不在 mypy 的
   `files = [flashgaze, tests, tools/bench]` 内，该脚本无类型门禁；⑤ 11-05 的 Benchmark
   趋势点已永久缺失，gh-pages 图表留洞。
+- **二次翻车（同一轮里我自己的第二个二阶缺陷，CI run 42198208112 = `37d7b7f`）**：上面
+  「方案 A」的第一版把反向对照写成 `_run(cmd, encoding="cp1252")` + 「拿不到诊断」，
+  本机（Windows）16 passed，推上去 **ubuntu + macOS 共 8 条腿判红**、windows 四腿反而绿：
+  ```
+  E   UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f in position 16: character maps to <undefined>
+  = 1 failed, 1070 passed, 29 skipped, 28 deselected, 409 warnings in 160.48s
+  ```
+  机理差异（已读 3.12 `Lib/subprocess.py` 核对）：POSIX 的 `_communicate` 用 selectors 读
+  原始字节、回主线程才 `_translate_newlines` → 异常抛给用例；Windows 的 `_readerthread`
+  在子线程 `fh.read()` → 异常逃线程、值留 `None`。**「本地证明过的机制」在另两个平台上
+  是另一种死法**——与 §3.9 同族，且这一笔是我这一轮新欠的，不是继承的。
+- **终态改法（仍零生产代码改动）**：反向对照降到**字节层**——子进程用 `capture_output=True`
+  拿原始 bytes，断 `combined.decode("utf-8")` 含「参数非法」+ `pytest.raises(UnicodeDecodeError)`
+  于 `combined.decode("cp1252")`；正向仍走 `_run` 的公开默认（显式 UTF-8）。
+  两段都不再进入 subprocess 的平台分支，12 腿同码同判；`filterwarnings` 忽略标记随之删除
+  （不再产生 reader 线程异常）。
+- **终态证据**：本机 py3.12 / py3.11.16 / **CPython 3.10.20 真机** 三个解释器
+  `tests/test_ci_push_gh_pages.py --noconftest` 各 **16 passed**；
+  变异复核（`_run` 默认 `encoding` 改 `"cp1252"`）在本机以 `TypeError: can only concatenate
+  str (not "NoneType")` 判红（POSIX 腿则是 `UnicodeDecodeError` 判红——两种死法都算红，
+  这正是把断言降到字节层后剩下的唯一平台差异，且方向是「更响」不是「更静默」）；
+  还原后 16 passed、`git diff` 无残留；`ruff check` / `mypy` 两面（82 files）全绿。

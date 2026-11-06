@@ -577,7 +577,7 @@ ubuntu py3.10 job 127794496252 日志逐字：`= 1 failed, 1069 passed, 29 skipp
 
 - `tests/test_ci_push_gh_pages.py`：删掉私有符号补丁，改走 `_run` **已有的公开 `encoding` 参数**
   做双向断言——① `encoding="cp1252"` 时中文诊断整段丢失（非空洞性凭证；纯 Python 层机制，
-  与机器语言设置无关，12 腿一致）；② 默认（显式 UTF-8）时诊断完整。
+  与机器语言设置无关，12 腿一致）；② 默认（显式 UTF-8）时诊断完整。（**这一版自己在 POSIX 上二次翻车，终态见 11.6**）
   反向那半会真的产生 reader 线程异常，故加
   `@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")`
   显式声明「这是被证明的机制本身」，避免将来 `filterwarnings` 收紧成 error 时把它打红。
@@ -618,3 +618,41 @@ uv pip install -p "$TEMP/fgpy310/Scripts/python.exe" "pytest==9.1.1"
   故不崩，只在非 ASCII git 诊断上 mojibake，且该脚本只在 ubuntu/py3.12 跑）→ 记录不动；
   ③ `tools/ci/` 不在 mypy 的 `files = [flashgaze, tests, tools/bench]` 内 → 无类型门禁；
   ④ 11-05 的 Benchmark 趋势点已永久缺失，gh-pages 图表留洞；⑤ Codecov token 仍缺（仓库设置项）。
+
+### 11.6 二次翻车：`_run(encoding="cp1252")` 的失败形态本身是平台专属的
+
+`37d7b7f` 推送后 CI run **42198208112** 的结果与本节 11.4 的预判完全不同：
+
+| 腿 | 结果 | 原因 |
+|---|---|---|
+| windows ×4 | **绿** | reader 线程吞掉 `UnicodeDecodeError` → `stderr=None` → 「拿不到诊断」成立 |
+| ubuntu ×4 + macOS ×4 | **红** | 同一条断言在主线程直接抛 `UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f in position 16` |
+| 每条腿合计 | `1 failed, 1070 passed, 29 skipped, 28 deselected` | py3.10 的原始缺陷确已被修好，只剩我这一个新用例 |
+
+机理（已读 3.12 `Lib/subprocess.py` 核对）：POSIX 的 `_communicate` 用 `_PopenSelector` 读**原始字节**，
+回到主线程才 `self._translate_newlines(...)` 解码 → 异常抛给调用方；Windows 的 `_communicate` 起
+`_readerthread` 在子线程 `fh.read()` → 异常逃出线程、收集值静默留 `None`。
+**我在 Windows 上验证了「吞成 None」这一种死法，就替 12 条腿担保了全部死法**——与 pitfalls §3.9
+同族，且这一笔是本轮新欠的，不是继承的。
+
+终态（仍零生产代码改动）：反向对照降到**字节层**，正向仍走 `_run` 的公开默认值。
+
+```python
+raw = subprocess.run(cmd, cwd=REPO_ROOT, env=clean_env, capture_output=True, check=False)
+combined = raw.stdout + raw.stderr
+assert "参数非法" in combined.decode("utf-8")  # 子进程发的确实是 UTF-8
+with pytest.raises(UnicodeDecodeError):
+    combined.decode("cp1252")  # runner 的 ACP 解不开这份字节
+ok = _run(cmd, REPO_ROOT, env=clean_env, check=False)
+assert "参数非法" in ok.stdout + ok.stderr  # 显式 UTF-8 才拿得到诊断
+```
+
+两段断言都不再进入 subprocess 的任何平台分支，12 腿同码同判；
+`filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")` 标记随之删除
+（bytes 模式下不再产生 reader 线程异常）。
+
+**终态证据**：py3.12 / py3.11.16 / **CPython 3.10.20 真机** 各 **16 passed**；
+变异复核（把 `_run` 默认 `encoding` 改成 `"cp1252"`）本机以 `TypeError: can only concatenate str
+(not "NoneType")` 判红、还原后转绿、`git diff` 无残留；全量
+**1076 passed / 29 skipped / 38 deselected**、覆盖率 90.49% ≥ 80；
+`ruff check` / `format --check`（103 files）/ `mypy` 两面（82 files）/ `check_agents_md` 全绿。

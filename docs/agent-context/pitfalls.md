@@ -329,6 +329,20 @@ Neumaier 补偿求和，3.10/3.11 仍是朴素左折叠；叠加两次归一化�
 - **与 §3.9 / §3.14 同族**：§3.9 是 `time.sleep(1e9)` 在 py3.10 Win/macOS 立即抛错；
   §3.14 是上游 pytest 9.2.0 删私有 `_nodeid` 打死 pytest-benchmark。本轮的位置很尴尬：
   **上一轮我们刚为别人删掉的私有符号买单并写了一条契约，这一轮我们自己造了一个同形状的**。
+- **二阶缺陷（本轮自己的账，CI run 42198208112 = `37d7b7f`）**：第一版重写把「非空洞性凭证」
+  写成 `_run(cmd, encoding="cp1252")` 后断言「拿不到诊断」。但**这个「拿不到」本身的形态是
+  平台专属的**：POSIX 的 `Popen._communicate` 用 selectors 读原始字节、回到**主线程**再
+  `_translate_newlines` 解码 → 直接把 `UnicodeDecodeError` 抛给用例；Windows 走
+  `_readerthread` 里的 `fh.read()` → 异常逃出线程、收集值静默留 `None`。开发机是 Windows，
+  本机 16 passed 全绿，推上去 **ubuntu + macOS 共 8 条腿判红**
+  （`UnicodeDecodeError: 'charmap' codec can't decode byte 0x8f in position 16`），
+  windows 四腿反而是绿的。这与 §3.9 是同一笔账的复发：**我在 Windows 上证明了一个机制，
+  然后替 12 条腿做了担保**。
+- **正解形态**：凡是「某编码解不开这份字节」这类断言，**断在字节层**——
+  `combined.decode("utf-8")` 有内容 + `pytest.raises(UnicodeDecodeError)` 于
+  `combined.decode("cp1252")`，两者都是纯 codec 运算，不进入 subprocess 的任何平台分支。
+  顺带不再需要 `filterwarnings` 忽略 reader 线程异常（那本来就是这个坑的气味）。
+
 - **修法**（生产代码、workflow、阈值、矩阵一条未动）：删掉私有符号补丁，改走 `_run`
   已有的公开 `encoding` 参数做**双向断言**——① `encoding="cp1252"` 时中文诊断整段丢失
   （非空洞性凭证：reader 线程抛 `UnicodeDecodeError` 被吞、`stderr` 变 `None`；纯 Python 层
@@ -348,3 +362,8 @@ Neumaier 补偿求和，3.10/3.11 仍是朴素左折叠；叠加两次归一化�
   4. 范围边界须写清：守卫只拦**补丁目标**，不拦 `argparse._StoreTrueAction` 这类**读取**
      （`tests/test_cli_parser.py`，3.10–3.13 均存在）。想一次扩大成「禁止一切私有符号」
      会把既有绿测试全打成红，属于用范围掩盖判断。
+  5. **「非空洞性凭证」也要选平台无关的层去断**。本轮两次翻车（恒真的补丁、Windows 专属的
+     失败形态）都是「在开发机上验证了一个只在开发机上成立的机制」。可判绿的最低成本问法：
+     这条断言在 ubuntu / macOS / windows 三条腿上走的是同一段代码吗？
+     本机是 Windows，`mypy --platform linux` 那套「补另一视角」的做法对**运行时行为**同样适用，
+     只是本轮没人给测试写这一面镜子——CI 承担了它。

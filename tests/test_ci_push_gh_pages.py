@@ -366,15 +366,12 @@ def test_extras_health_workflow_uses_shared_push_tool() -> None:
     _assert_workflow_uses_tool("extras-health.yml")
 
 
-# 反向那一半会真的让 reader 线程抛 UnicodeDecodeError —— 那正是被证明的机制本身，
-# 不是待修的缺陷；不显式忽略的话，将来 filterwarnings 收紧成 error 会把这条用例打红。
-@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_tool_output_decoded_as_utf8_on_non_utf8_runner(
     tmp_path: Path, clean_env: dict[str, str]
 ) -> None:
-    """脚本输出必须显式按 UTF-8 解码：runner 的 ACP 是 cp1252，按它解码会整段丢诊断。
+    """脚本输出必须显式按 UTF-8 解码：runner 的 ACP 是 cp1252，按它解码拿不到诊断。
 
-    下面两个 run 号是这条用例的存在理由：
+    三个 run 号是这条用例的存在理由：
 
     - **42185258304**（windows 三腿）：`_run` 未显式给 `encoding`，父进程按 runner ACP
       （cp1252）解 UTF-8 中文 → reader 线程抛 `UnicodeDecodeError` 被吞 → `stderr` 静默变
@@ -384,10 +381,14 @@ def test_tool_output_decoded_as_utf8_on_non_utf8_runner(
       `monkeypatch.setattr(subprocess, "_text_encoding", ...)`，而那是 **3.11 才有的私有
       函数**（矩阵下限是 3.10）——三腿 `AttributeError`；且 `_run` 已写死 `encoding`，
       subprocess 的默认文本编码根本不参与，这条用例在 3.11+ 还是恒真的。
+    - **42198208112**（ubuntu + macOS 八条腿）：把反向对照写成 `_run(encoding="cp1252")`
+      再断言「拿不到诊断」，但这条失败形态**本身是平台专属的**——POSIX 的
+      `_communicate` 走 selectors、在主线程解码，直接抛 `UnicodeDecodeError`；
+      Windows 走 `_readerthread`、异常被吞成 `None`。开发机是 Windows，于是又一次
+      「本地证明过的机制，到 8 条腿上是另一种死法」（同 pitfalls §3.9 那笔账）。
 
-    现在改成走 `_run` 已有的公开 `encoding` 参数：先用 cp1252 解码证明机制真的会咬人
-    （非空洞性凭证，纯 Python 层行为，与机器语言设置无关，12 腿一致），再证明默认路径
-    按 UTF-8 解码才拿得到诊断。不碰任何 stdlib 内部符号。
+    所以反向对照断在**字节层**：同一份输出，UTF-8 解得开、cp1252 解不开——与 subprocess
+    内部走哪条路无关，12 腿一致。正向仍走 `_run` 的公开默认值（显式 UTF-8）。
     """
     _, work = _init_pair(tmp_path)
     cmd = [
@@ -403,15 +404,16 @@ def test_tool_output_decoded_as_utf8_on_non_utf8_runner(
         "0",
     ]
 
-    # 反向：模拟 runner 的 ACP 解码（cp1252 里 0x8F / 0x9D 是未定义位），诊断整段丢失。
-    broken = _run(cmd, REPO_ROOT, env=clean_env, check=False, encoding="cp1252")
-    assert broken.returncode == 2
-    assert "参数非法" not in (broken.stdout or "") + (broken.stderr or ""), (
-        "按 cp1252 解码居然拿到了完整中文——本用例的非空洞性前提失效（子进程输出编码变了？），"
-        "正向断言也随之失去意义"
-    )
+    # 非空洞性凭证（字节层，平台无关）：子进程发的是 UTF-8 中文，
+    # 用 runner 的 ACP（cp1252）解码必然失败——0x8F / 0x9D 在 cp1252 里是未定义位。
+    raw = subprocess.run(cmd, cwd=REPO_ROOT, env=clean_env, capture_output=True, check=False)
+    assert raw.returncode == 2
+    combined = raw.stdout + raw.stderr
+    assert "参数非法" in combined.decode("utf-8")
+    with pytest.raises(UnicodeDecodeError):
+        combined.decode("cp1252")
 
-    # 正向：`_run` 默认显式 UTF-8，诊断完整可读。
+    # 正向契约：`_run` 默认显式 UTF-8，诊断完整可读（42185258304 的红就断在这里）。
     ok = _run(cmd, REPO_ROOT, env=clean_env, check=False)
     assert ok.returncode == 2
     assert "参数非法" in ok.stdout + ok.stderr
