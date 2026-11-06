@@ -20,9 +20,15 @@ IDENT = ["-c", "user.name=ci-test", "-c", "user.email=ci-test@example.com"]
 
 
 def _run(
-    args: list[str], cwd: Path, env: dict[str, str] | None = None, check: bool = True
+    args: list[str],
+    cwd: Path,
+    env: dict[str, str] | None = None,
+    check: bool = True,
+    encoding: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True, check=False)
+    result = subprocess.run(
+        args, cwd=cwd, env=env, capture_output=True, text=True, encoding=encoding, check=False
+    )
     if check and result.returncode != 0:
         raise AssertionError(
             f"command failed: {args}\nstdout={result.stdout}\nstderr={result.stderr}"
@@ -62,6 +68,9 @@ def _init_pair(tmp_path: Path, history: int = 1) -> tuple[Path, Path]:
     _git(tmp_path, "init", "--bare", str(bare))
     work = tmp_path / "work"
     _git(tmp_path, "clone", str(bare), str(work))
+    # 工作区固定 LF：工具运行时清空了全局配置，被 autocrlf 转成 CRLF 的文件会被
+    # 判成未提交修改，从而阻塞分支切换（与真实 runner 的 checkout 行为对齐）。
+    _git(work, "config", "core.autocrlf", "false")
     _git(work, *IDENT, "checkout", "-b", "gh-pages")
     data = work / "dev" / "bench" / "data.js"
     data.parent.mkdir(parents=True)
@@ -122,6 +131,7 @@ def _run_tool(
         REPO_ROOT,
         env=env,
         check=False,
+        encoding="utf-8",
     )
 
 
@@ -209,6 +219,32 @@ def test_fatal_auth_fails_fast_without_retry(tmp_path: Path, clean_env: dict[str
     assert result.returncode == 1, result.stderr
     assert _attempts(bare) == 1, result.stdout + result.stderr
     assert "class=fatal-auth" in result.stdout + result.stderr
+
+
+def test_head_on_other_branch_still_pushes_target_branch(
+    tmp_path: Path, clean_env: dict[str, str]
+) -> None:
+    """github-action-benchmark 提交完 gh-pages 后会 `git checkout -` 切回 main。
+
+    推送脚本必须能推送目标分支，不能把「HEAD 不在 gh-pages 上」当成错误，
+    也不能动 HEAD 之外的提交。
+    """
+    bare, work = _init_pair(tmp_path)
+    _git(work, *IDENT, "switch", "-c", "main")
+    _commit(work, "main file\n", path="README.md")
+    _git(work, *IDENT, "push", "origin", "main")
+
+    _git(work, *IDENT, "switch", "gh-pages")
+    _commit(work, "local result\n")
+    target = _git(work, "rev-parse", "HEAD")
+    _git(work, *IDENT, "switch", "main")
+
+    result = _run_tool(work, clean_env, "--attempts", "3")
+
+    assert result.returncode == 0, result.stderr
+    assert _git(bare, "rev-parse", "refs/heads/gh-pages") == target
+    assert _git(work, "symbolic-ref", "--short", "HEAD") == "main"
+    assert _git(work, "rev-parse", "refs/heads/main") == _git(bare, "rev-parse", "refs/heads/main")
 
 
 def test_missing_local_branch_fails_without_rebase(
@@ -332,3 +368,40 @@ def test_extras_health_workflow_uses_shared_push_tool() -> None:
 def test_tool_source_has_no_shallow_fetch() -> None:
     source = TOOL.read_text(encoding="utf-8")
     assert "--depth" not in source
+
+
+def test_tool_source_has_no_shebang() -> None:
+    """tools/*.py 一律不加 shebang（pitfalls §3.8）。
+
+    EXE001 的判据是文件 exec 位，NTFS 无该语义，Windows 本地恒不报，
+    只有 ubuntu 的 lint job 能把这类「本地绿、CI 红」揪出来。
+    """
+    assert not TOOL.read_text(encoding="utf-8").startswith("#!")
+
+
+def test_diagnostics_survive_non_utf8_console(tmp_path: Path, clean_env: dict[str, str]) -> None:
+    """Windows runner 用 cp1252 接管控制台时，中文诊断会退化成 \\uXXXX 转义串。"""
+    _, work = _init_pair(tmp_path)
+    env = dict(clean_env, PYTHONIOENCODING="cp1252")
+
+    result = _run(
+        [
+            sys.executable,
+            str(TOOL),
+            "--repo",
+            str(work),
+            "--branch",
+            "gh-pages",
+            "--backoff-base",
+            "0",
+            "--attempts",
+            "0",
+        ],
+        REPO_ROOT,
+        env=env,
+        check=False,
+        encoding="utf-8",
+    )
+
+    assert result.returncode == 2
+    assert "参数非法" in result.stdout + result.stderr

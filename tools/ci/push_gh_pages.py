@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """把本地 gh-pages 提交推送到远端，替代 workflow 里的两处内联重试脚本。
 
 设计目标（对应 docs/ci-fix-plan.md）：
@@ -181,10 +180,29 @@ def _run(args: argparse.Namespace) -> int:
     if _git(git, repo, ["rev-parse", "--verify", "--quiet", branch_ref]).returncode != 0:
         print(f"push-gh-pages: 本地分支不存在: {branch_ref}", file=sys.stderr)
         return 1
-    head = _git(git, repo, ["symbolic-ref", "--short", "HEAD"]).stdout.strip()
-    if head != args.branch:
-        print(f"push-gh-pages: 当前分支 {head!r} 不是目标分支 {args.branch!r}", file=sys.stderr)
-        return 1
+
+    # github-action-benchmark 提交完 gh-pages 后会 `git checkout -` 切回默认分支，
+    # 因此不能要求 HEAD 正好在目标分支上：rebase 只能在已检出的分支上做，
+    # 这里先切过去，结束后切回原分支。
+    previous = _git(git, repo, ["symbolic-ref", "--short", "HEAD"]).stdout.strip()
+    switched = previous != args.branch
+    if switched:
+        switch = _git(git, repo, ["switch", args.branch])
+        if switch.returncode != 0:
+            detail = (switch.stdout + switch.stderr).strip()
+            print(f"push-gh-pages: 无法切换到 {args.branch}: {detail}", file=sys.stderr)
+            return 1
+    try:
+        return _push(args)
+    finally:
+        if switched and previous:
+            restore = _git(git, repo, ["switch", previous])
+            if restore.returncode != 0:
+                print(f"push-gh-pages: 提示: 未能切回原分支 {previous!r}", file=sys.stderr)
+
+
+def _push(args: argparse.Namespace) -> int:
+    git, repo = args.git, args.repo
 
     # 首次 push 前也先做一次完整同步，避免基于陈旧远端历史起推。
     initial = _sync_and_rebase(git, repo, args.remote, args.branch, args)
@@ -242,7 +260,16 @@ def _run(args: argparse.Namespace) -> int:
     return 1
 
 
+def _utf8_streams() -> None:
+    """固定 UTF-8 输出：Windows runner 的控制台是 cp1252，中文诊断会被替换成转义串。"""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    _utf8_streams()
     parser = argparse.ArgumentParser(description="推送 gh-pages 提交到远端")
     parser.add_argument("--repo", default=".")
     parser.add_argument("--remote", default="origin")

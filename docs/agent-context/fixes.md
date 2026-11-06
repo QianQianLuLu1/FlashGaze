@@ -539,5 +539,18 @@
   YAML 解析通过。
 - **未闭环（如实标注）**：平台 `commit_refs_rules` 本身无法在仓库消除，只能把影响收敛为
   “一次瞬时错误不再直接判红”；最终仍失败时当天基准数据点不会补推。
+- **首推后的二次回归（`052d77b` 的 CI 反证，同日已修）**：新脚本与 workflow 首次进 CI 后
+  暴露三个本地测不到的缺陷——① Benchmark push run 42182164644 的 step 13 秒退：脚本要求
+  HEAD 就在目标分支，而 `github-action-benchmark` 提交完 gh-pages 会 `git checkout -` 切回
+  main；② CI run 42182164636 的 lint job 报 `EXE001`：`tools/*.py` 带了 shebang，而
+  NTFS 没有 exec 位语义、Windows 本地恒不报（pitfalls §3.8 早有口径）；③ 同 run 的
+  windows 三腿在 `test_invalid_arguments_exit_2_without_side_effects` 判红：runner 控制台
+  是 cp1252，`sys.stderr` 的 backslashreplace 把中文诊断写成 `\u53c2\u6570…`。
+  修法：脚本在目标分支未检出时 `git switch` 过去、结束后切回；去掉 shebang（调用方本就
+  显式 `python <path>`）；启动时把 stdout/stderr 固定为 UTF-8。三条新用例
+  （`test_head_on_other_branch_still_pushes_target_branch`、
+  `test_tool_source_has_no_shebang`、`test_diagnostics_survive_non_utf8_console`）
+  逐条先红灯再转绿，`tests/test_ci_push_gh_pages.py` 15 条全绿；`tests/` 全量
+  **1074 passed / 29 skipped / 38 deselected**。
 
 

@@ -472,7 +472,7 @@ pip-audit --strict -r requirements-dev.txt   # 与 report-only 步骤同款
 | 文件 | 变更 |
 |---|---|
 | `tools/ci/push_gh_pages.py` | 新增：参数校验、完整 fetch、显式提交身份、失败分类、有界退避、`ls-remote` 回验 |
-| `tests/test_ci_push_gh_pages.py` | 新增 12 条行为/契约测试 |
+| `tests/test_ci_push_gh_pages.py` | 新增 15 条行为/契约测试 |
 | `.github/workflows/benchmark.yml` | step 13 改为调用共享脚本；删除内联重试与 `--depth=50` |
 | `.github/workflows/extras-health.yml` | charts step 改为调用共享脚本；charts job 补 `setup-python@v6 (3.12)`；sentinel 的 `--depth=50` 改为完整 fetch + ancestor 判定 |
 | `docs/agent-context/fixes.md` | 新增 §4.13 事故记录 |
@@ -495,13 +495,17 @@ pip-audit --strict -r requirements-dev.txt   # 与 report-only 步骤同款
 | `test_benchmark_workflow_uses_shared_push_tool` | 失败（内联脚本） | 通过 |
 | `test_extras_health_workflow_uses_shared_push_tool` | 失败（内联脚本 + `--depth=50`） | 通过 |
 | `test_tool_source_has_no_shallow_fetch` | 失败（脚本不存在） | 通过 |
+| `test_head_on_other_branch_still_pushes_target_branch` | 失败（`当前分支 'main' 不是目标分支 'gh-pages'`，复现 CI run 42182164644） | 通过（远端 gh-pages 更新，结束后 HEAD 切回 main） |
+| `test_tool_source_has_no_shebang` | 失败（文件以 `#!` 开头，复现 CI run 42182164636 的 `EXE001`） | 通过 |
+| `test_diagnostics_survive_non_utf8_console` | 失败（`\u53c2\u6570\u975e\u6cd5` 转义串，复现 windows 三腿判红） | 通过（`PYTHONIOENCODING=cp1252` 下仍是可读中文） |
 
-红灯阶段实跑结果：**11 failed / 0 passed**；转绿后：**12 passed**。
+首轮红灯阶段实跑结果：**11 failed / 0 passed**；转绿后：**12 passed**。
+推送后 CI 反证暴露 3 条本地测不到的缺陷，逐条补红灯（1 / 1 / 1 failed）后修复，现 **15 passed**。
 
 ### 10.3 回归与全局校验（本机实测）
 
-- `python -m pytest tests/ -q`：变更前连续两次 **1059 passed / 29 skipped / 38 deselected**；变更后 **1071 passed**（453s，+12 条新增），无新增失败。
-- `python -m pytest tests/ -q -o addopts=`：**1109 passed / 29 skipped**。
+- `python -m pytest tests/ -q`：变更前连续两次 **1059 passed / 29 skipped / 38 deselected**；首轮变更后 **1071 passed**（453s，+12 条新增）；二次修复后 **1074 passed / 29 skipped / 38 deselected**（447.80s，+15 条新增），无新增失败。
+- `python -m pytest tests/ -q -o addopts=`（首轮变更后）：**1109 passed / 29 skipped**。
 - `python -m pytest benchmarks/ -m "not bench_full" --benchmark-disable-gc`：**8 passed / 1 deselected**（5.59s）。
 - `python -m ruff check .`、`python -m ruff format --check .`：通过（103 files）。
 - `python -m mypy`、`python -m mypy --platform linux`：通过（82 source files）。
@@ -512,6 +516,17 @@ pip-audit --strict -r requirements-dev.txt   # 与 report-only 步骤同款
 
 ### 10.4 推送与 CI 终验
 
-- 推送方式：直接 `git push origin main`（用户已定）。
-- CI 结论：待推送后回填。
+- 推送方式：直接 `git push origin main`（用户已定），凭据用本机 git credential 里已有的。
+- 首推 `052d77b`（2026-11-06T07:38Z）后新触发的两条运行，都成为新的反证：
+  - **Benchmark** run **42182164644**（event=`push`）：step 13 在 40ms 内退出 1，
+    日志 `push-gh-pages: 当前分支 'main' 不是目标分支 'gh-pages'`。根因是我们的脚本
+    要求 HEAD 在目标分支，而 `github-action-benchmark` 提交完 gh-pages 会 `git checkout -`
+    切回 main（旧内联脚本用 `git push origin gh-pages:gh-pages`，从不看 HEAD）。
+  - **CI** run **42182164636**（event=`push`）：lint job 报 `EXE001`（新脚本带 shebang，
+    NTFS 无 exec 位语义，本地 ruff 恒不报，pitfalls §3.8 早有口径），windows 三腿
+    在 `test_invalid_arguments_exit_2_without_side_effects` 判红（cp1252 控制台把中文诊断
+    写成 `\uXXXX` 转义串）；ubuntu / macos 腿全绿，说明是平台语义差异而非逻辑错误。
+- 二次修复（逐条先红灯再转绿，见 10.2 后 3 行）：脚本按需 `git switch` 目标分支并在结束时切回、
+  去掉 shebang、启动时把 stdout/stderr 固定为 UTF-8。
+- 最终 CI 结论：（下一提交推送后回填 run id / event / 结论）。
 
