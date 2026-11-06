@@ -343,12 +343,16 @@ Neumaier 补偿求和，3.10/3.11 仍是朴素左折叠；叠加两次归一化�
   `combined.decode("cp1252")`，两者都是纯 codec 运算，不进入 subprocess 的任何平台分支。
   顺带不再需要 `filterwarnings` 忽略 reader 线程异常（那本来就是这个坑的气味）。
 
-- **修法**（生产代码、workflow、阈值、矩阵一条未动）：删掉私有符号补丁，改走 `_run`
-  已有的公开 `encoding` 参数做**双向断言**——① `encoding="cp1252"` 时中文诊断整段丢失
-  （非空洞性凭证：reader 线程抛 `UnicodeDecodeError` 被吞、`stderr` 变 `None`；纯 Python 层
-  机制，与机器语言设置无关，故 12 腿行为一致）；② 默认（显式 UTF-8）时诊断完整。
-  变异复核：把 `_run` 默认改成 `"cp1252"` → 该用例立刻以 **CI 原始签名**
-  （`TypeError: can only concatenate str (not "NoneType")`）判红，证明它真的在测契约。
+- **修法**（生产代码、workflow、阈值、矩阵一条未动）：删掉私有符号补丁，改成**双向断言**，
+  且**反向那半断在字节层**——① 子进程 `capture_output=True` 拿原始 bytes：
+  `combined.decode("utf-8")` 含「参数非法」（证明发的确实是 UTF-8）
+  + `pytest.raises(UnicodeDecodeError)` 于 `combined.decode("cp1252")`
+  （0x8F / 0x9D 在 cp1252 是未定义位）；② 正向走 `_run` 的公开默认（显式 UTF-8）拿到完整诊断。
+  ①里**不调用 `_run(encoding="cp1252")`**：那是本条下面「二阶缺陷」翻车的地方——
+  「按 ACP 解码拿不到诊断」这个事实成立，但它的**表现形式**是平台专属的。
+  变异复核：把 `_run` 默认改成 `"cp1252"` → 该用例立刻判红（Windows 上是
+  `TypeError: can only concatenate str (not "NoneType")`，即 CI run 42185258304 的原始签名；
+  POSIX 上是 `UnicodeDecodeError` 直接抛出）。两种死法都是红，方向是「更响」不是「更静默」。
 - **一般化**：
   1. **测试桩只允许打在公开入参 / 公开 API 上**。以字符串形式出现在 `setattr` /
      `delattr` 里的 stdlib 私有符号（`_` 开头）没有兼容性承诺，其存在性随小版本变化。
