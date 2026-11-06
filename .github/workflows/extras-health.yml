@@ -161,15 +161,21 @@ jobs:
             git rm "$LOCK"
             git commit -m "chore(extras): auto-unlock extras-strict (health recovered)"
           fi
-          # 重试推送：被拒则同步远端最新 HEAD，rebase 本地提交后重试（最多 5 次）
+          # 重试推送：完整同步远端，仅当远端领先时 rebase 本地提交后重试（最多 5 次）
           for attempt in 1 2 3 4 5; do
             if git push origin "HEAD:refs/heads/$TARGET_REF"; then
               echo "sentinel 推送成功（第 $attempt 次尝试）"
               exit 0
             fi
-            echo "::warning::推送被拒，同步最新远端后重试（第 $attempt 次）"
+            echo "::warning::推送被拒，完整同步最新远端后重试（第 $attempt 次）"
             sleep $((attempt * 10))
-            git fetch --depth=50 origin "$TARGET_REF"
+            if ! git fetch origin "+refs/heads/$TARGET_REF:refs/remotes/origin/$TARGET_REF"; then
+              echo "::warning::sentinel 远端同步失败，继续重试"
+              continue
+            fi
+            if git merge-base --is-ancestor "origin/$TARGET_REF" HEAD; then
+              continue
+            fi
             if ! git rebase "origin/$TARGET_REF"; then
               git rebase --abort
               echo "::error::sentinel rebase 冲突（可能有人工改动锁文件），本次推送中止，交由下一轮 nightly 自愈"
@@ -239,6 +245,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v5
 
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
       - name: Download health outputs
         uses: actions/download-artifact@v4
         with:
@@ -256,32 +267,17 @@ jobs:
           output-file-path: health_out/benchmark.json
           benchmark-data-dir-path: dev/extras-health
           gh-pages-branch: gh-pages
-          # 改手动推送（下一步）：action 不支持推送重试，与 benchmark nightly 并发推 gh-pages 会被拒
+          # 推送统一交给可测试脚本（完整 fetch + 显式身份 + 错误分类 + 有界退避）
           auto-push: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
           max-items-in-chart: 200
 
-      # 手动重试推送：上一步已在本地 gh-pages 分支生成提交；被拒则 fetch + rebase + 退避重试。
-      # 两工作流写 gh-pages 的目录不同（dev/bench vs dev/extras-health），rebase 无内容冲突。
+      # 上一步已在本地 gh-pages 分支生成提交；推送策略与错误分类见共享脚本。
       - name: Push gh-pages with retry
         run: |
-          set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            if git push origin gh-pages:gh-pages; then
-              echo "gh-pages 推送成功（第 $attempt 次尝试）"
-              exit 0
-            fi
-            echo "::warning::gh-pages 推送被拒，同步最新远端后重试（第 $attempt 次）"
-            sleep $((attempt * 10))
-            git fetch --depth=50 origin gh-pages
-            if ! git rebase origin/gh-pages; then
-              git rebase --abort
-              echo "::error::gh-pages rebase 冲突，本次趋势数据推送中止，下一轮运行自愈"
-              exit 1
-            fi
-          done
-          echo "::error::gh-pages 推送在 5 次重试后仍失败"
-          exit 1
+          python tools/ci/push_gh_pages.py \
+            --repo . --remote origin --branch gh-pages \
+            --attempts 5 --backoff-base 10
 
   # ── 每周摘要（周一或手动）─────────────────────────────────────────────
   weekly-report:

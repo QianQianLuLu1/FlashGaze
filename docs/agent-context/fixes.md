@@ -503,4 +503,41 @@
 - **推论（尚未做）**：`pytest-cov>=4.1.0,<8` 仍浮动，是同族残留风险，本轮不扩大改动面；
   解钉那一轮须一并覆盖 9.2.0 的三个真实 breaking（#14716 / #8593 / #993）与四条 Python 腿。
 
+---
+
+## 4.13 nightly 无人推送却变红：平台 `commit_refs_rules` + 我们自己的残缺重试（2026-11-06，非审查编号项）
+
+- **现象**：`main` 最后一次推送是 10-28（`68c086b`），之后没有任何 push；11-05 nightly
+  Benchmark run **42129078042**（event=`schedule`，head_sha=`68c086b`，与 11-04 绿的
+  **41933275935** 同 sha）在 step 13 `Push gh-pages with retry` 变红。触发源是
+  `benchmark.yml` 的 `cron: '0 18 * * *'`（实际排队到 23:24Z 才起跑）。
+- **直接原因（平台侧）**：GitHub 返回 `remote: fatal error in commit_refs_rules`；
+  仓库 `rulesets=0`、`gh-pages` `protected=false`，相邻日同命令成功 → 平台 ref 规则求值的
+  瞬时内部错误，仓库内不可根除。
+- **被放大成红灯的原因（我们自己的重试代码）**：
+  a) 未注入提交身份 → `Committer identity unknown`，却被脚本误报成“rebase 冲突”；
+  b) `git fetch --depth=50` 制造浅历史 → 日志 `Rebasing (1/15)`，有改写 gh-pages 历史的风险；
+  c) 错误不分类，权限/非快进/平台瞬时全走同一路径；
+  d) 当天 `dev/bench` 数据点因此永久缺失（“下一轮运行自愈”不成立）。
+  `extras-health.yml` 的 charts 与 sentinel 两处内联脚本同缺陷（sentinel 已有身份，但同样
+  `--depth=50`）。
+- **取证**：本机 `gh` 未登录，改用只读 REST（凭据来自本机 git credential，未落盘/未改配置）
+  拿到 run 列表、jobs/steps、check-run 注解、job 日志、branches、rulesets；关键日志原文与
+  证据缺口见 `docs/ci-fix-plan.md` 附录 A / A.6。
+- **修复（依赖零新增，未改测试矩阵/阈值/超时，未用 skip/xfail/重试掩盖）**：
+  新增 `tools/ci/push_gh_pages.py`——参数校验、完整 fetch、显式身份、
+  `fatal-auth` / `non-fast-forward` / `transient` / `unknown` 分类、有界退避、
+  `ls-remote` 回验、退避耗尽明确判红；两处 gh-pages 内联脚本改为调用它；
+  extras sentinel 改为完整 fetch + ancestor 判定后再 rebase；charts job 补
+  `setup-python@v6 (3.12)` 消除系统 Python 漂移。
+- **TDD 凭证**：`tests/test_ci_push_gh_pages.py` 12 条，先 11 条全红再转绿；覆盖
+  `Committer identity unknown`、`--depth=50` 造成的领先数失真、瞬时错误重试、权限类不重试、
+  rebase 冲突 abort、参数非法 exit 2、workflow 契约。初版“参数非法”用例曾因脚本缺失
+  自带返回 2 而假绿，已加“参数非法”文案断言重写后判红。
+- **回归**：`tests/` 全量 **1059 passed / 29 skipped / 38 deselected**，连续两次同结果；
+  ruff、ruff format --check、mypy、mypy `--platform linux`、pre-commit 全通过；两条 workflow
+  YAML 解析通过。
+- **未闭环（如实标注）**：平台 `commit_refs_rules` 本身无法在仓库消除，只能把影响收敛为
+  “一次瞬时错误不再直接判红”；最终仍失败时当天基准数据点不会补推。
+
 

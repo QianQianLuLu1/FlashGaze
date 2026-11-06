@@ -180,33 +180,17 @@ jobs:
           comment-on-alert: true
           comment-always: ${{ github.event_name == 'pull_request' }}
           summary-always: true
-          # 仅 main push / nightly 累积数据；PR 不推。统一改手动推送（下一步）：
-          # action 不支持推送重试，与 extras-health charts 并发推 gh-pages 会被拒，
-          # 改由下一步在本地提交基础上 fetch + rebase + 退避重试。
+          # 仅 main push / nightly 累积数据；PR 不推。推送统一交给可测试脚本
+          # tools/ci/push_gh_pages.py（完整 fetch + 显式身份 + 错误分类 + 有界退避）。
           auto-push: false
           # gh-pages 尚未引导（仓库首批 PR）时跳过拉取历史数据
           skip-fetch-gh-pages: ${{ steps.ghpages.outputs.exists != 'true' }}
 
-      # 手动重试推送：上一步已在本地 gh-pages 分支生成提交（仅 push/schedule 场景；
-      # PR 与 fork PR 行为不变，不进入本步骤）。被拒则同步远端最新 HEAD，
-      # rebase 后重试（最多 5 次）；两工作流写不同目录，rebase 无内容冲突。
+      # 上一步已在本地 gh-pages 分支生成提交（仅 push/schedule 场景；PR 与 fork PR
+      # 行为不变，不进入本步骤）。推送策略与错误分类见 tools/ci/push_gh_pages.py。
       - name: Push gh-pages with retry
         if: github.event_name == 'push' || github.event_name == 'schedule'
         run: |
-          set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            if git push origin gh-pages:gh-pages; then
-              echo "gh-pages 推送成功（第 $attempt 次尝试）"
-              exit 0
-            fi
-            echo "::warning::gh-pages 推送被拒，同步最新远端后重试（第 $attempt 次）"
-            sleep $((attempt * 10))
-            git fetch --depth=50 origin gh-pages
-            if ! git rebase origin/gh-pages; then
-              git rebase --abort
-              echo "::error::gh-pages rebase 冲突，本次趋势数据推送中止，下一轮运行自愈"
-              exit 1
-            fi
-          done
-          echo "::error::gh-pages 推送在 5 次重试后仍失败"
-          exit 1
+          python tools/ci/push_gh_pages.py \
+            --repo . --remote origin --branch gh-pages \
+            --attempts 5 --backoff-base 10
