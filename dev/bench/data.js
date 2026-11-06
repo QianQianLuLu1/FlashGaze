@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793962533282,
+  "lastUpdate": 1793962672924,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -2400,6 +2400,84 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000006686236981894774",
             "extra": "mean: 485.9250999999176 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "committer": {
+            "email": "init@flashgaze.local",
+            "name": "FlashGaze Init"
+          },
+          "distinct": true,
+          "id": "475633d4bb92299dbe4d4d8cf84b1c0f5308bbc6",
+          "message": "docs(ci): 把「与机器语言设置无关，故 12 腿一致」从事实句改成被证伪的旧判断\n\nAGENTS.md 每次会话自动注入，若「本轮改动 ①」仍以这句描述修法，下一个会话会把它当依据照抄——\n而它正是 run 42198208112 八条腿判红的那句错判（POSIX 在主线程抛 UnicodeDecodeError、\nWindows 才在 _readerthread 里吞成 None）。按 §4.11 立的规矩（订正到不留「注释说谎」）：\n\n- AGENTS.md「本轮改动 ①」改写成终态表述（反向断在字节层，正向走 _run 公开默认，\n  两段都不进入 subprocess 的平台分支），并注明第一版的写法与那句已被下一段证伪；\n- docs/ci-fix-plan.md §11.3 把那句从陈述改成「当时以为……已被 run 42198208112 证伪」，\n  指向 11.7 的二次翻车与终态。\n\npitfalls §3.15 的「修法」已在上一个提交同步为终态，本轮四处口径现在一致。\n纯文档：ruff check / format --check（103 files）/ check_agents_md /\ndocs 一致性与契约测试（24 passed）全绿。",
+          "timestamp": "2026-11-06T18:53:57+08:00",
+          "tree_id": "1b7b554f7e9838d00faf4b843a2509b7dfda271e",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/475633d4bb92299dbe4d4d8cf84b1c0f5308bbc6"
+        },
+        "date": 1793962672415,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 10.84054245366205,
+            "unit": "iter/sec",
+            "range": "stddev: 0.014623943006020382",
+            "extra": "mean: 92.24630633333202 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 12.888365790934992,
+            "unit": "iter/sec",
+            "range": "stddev: 0.004604044946708043",
+            "extra": "mean: 77.58935587499761 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 208.98507287533317,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001959613749530594",
+            "extra": "mean: 4.7850307500025835 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 2371.3435285493124,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017430985295336867",
+            "extra": "mean: 421.70186983062615 usec\nrounds: 1475"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 21.919078540876672,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006926878655488159",
+            "extra": "mean: 45.62235579999907 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 46.378618156816515,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011804489006349555",
+            "extra": "mean: 21.561660086955925 msec\nrounds: 46"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 97.60724292761971,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011087463636630719",
+            "extra": "mean: 10.245141344085974 msec\nrounds: 93"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 1532.0516699753807,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001912285856200613",
+            "extra": "mean: 652.7194999996766 usec\nrounds: 10"
           }
         ]
       }
