@@ -577,7 +577,7 @@ ubuntu py3.10 job 127794496252 日志逐字：`= 1 failed, 1069 passed, 29 skipp
 
 - `tests/test_ci_push_gh_pages.py`：删掉私有符号补丁，改走 `_run` **已有的公开 `encoding` 参数**
   做双向断言——① `encoding="cp1252"` 时中文诊断整段丢失（非空洞性凭证；纯 Python 层机制，
-  与机器语言设置无关，12 腿一致）；② 默认（显式 UTF-8）时诊断完整。（**这一版自己在 POSIX 上二次翻车，终态见 11.6**）
+  与机器语言设置无关，12 腿一致）；② 默认（显式 UTF-8）时诊断完整。（**这一版自己在 POSIX 上二次翻车，终态见 11.7**）
   反向那半会真的产生 reader 线程异常，故加
   `@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")`
   显式声明「这是被证明的机制本身」，避免将来 `filterwarnings` 收紧成 error 时把它打红。
@@ -636,7 +636,22 @@ uv pip install -p "$TEMP/fgpy310/Scripts/python.exe" "pytest==9.1.1"
   ③ `tools/ci/` 不在 mypy 的 `files = [flashgaze, tests, tools/bench]` 内 → 无类型门禁；
   ④ 11-05 的 Benchmark 趋势点已永久缺失，gh-pages 图表留洞；⑤ Codecov token 仍缺（仓库设置项）。
 
-### 11.6 二次翻车：`_run(encoding="cp1252")` 的失败形态本身是平台专属的
+### 11.6 安全检查口径（本机 pip-audit 会红，但仓库不红——别把它读成漏洞暴露）
+
+本轮零依赖变更（`git diff --name-only 687756c..HEAD` 只有 `tests/` 与 `docs/`），但本机
+`python -m pip_audit` 仍报 14 个包命中通告。逐条比对后的结论：
+
+- 命中集里唯一落在**运行时依赖**上的是 `pillow 12.2.0`（修复线 12.3.0）。本机是过期缓存：
+  PyPI 当前解析到 **13.0.0**（2026-10-16），而约束是 `Pillow>=10.0.0,<14` →
+  CI 的 `pip install -e .` 装的是已修复版本，`Security` workflow 的 success 是真的。
+- `mcp 1.29.0` 属 **extras**（`[mcp]`），security.yml 的主扫描环境不装它；
+  其余（`virtualenv` / `werkzeug` / `setuptools` / `pip` / `aiohttp` / `msgpack` 等）
+  来自本机额外装的工具链，均不在 CI 的门禁环境里。
+- **给下一轮的提醒**：`make install` 不装 `-e .`（见 AGENTS.md §5），所以开发机的依赖树
+  与 CI 门禁环境本来就不是同一份。要复现门禁口径得新建干净 venv 只跑 `pip install -e .`，
+  否则会把本机缓存读成仓库暴露。豁免单 `PIP_AUDIT_IGNORE` 目前为空，无需登记。
+
+### 11.7 二次翻车：`_run(encoding="cp1252")` 的失败形态本身是平台专属的
 
 `37d7b7f` 推送后 CI run **42198208112** 的结果与本节 11.4 的预判完全不同：
 
