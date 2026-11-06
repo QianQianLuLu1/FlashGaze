@@ -612,7 +612,24 @@ uv pip install -p "$TEMP/fgpy310/Scripts/python.exe" "pytest==9.1.1"
 
 - 判据：新 CI run 的 **12 条腿全绿**，且 `extras` 与 `e2e` 由 skipped 变**真实执行并 success**
   （它们只因 test 腿红而被连带跳过，本轮是它们在新配置下的首次真实执行机会）。
-- 结果：（推送后回填 run id / event / 结论）。
+- 结果（**已终验通过**）：`5cc0781` 推送后 CI run **42200923304**（event=`push`、
+  2026-11-06T10:12:51Z 起跑、10:43 前后收口）结论 **success**，21 个 job =
+  **20 success + 1 skipped**（skipped 是设计成非门禁的 `e2e (playwright, webkit, optional)`），
+  **0 失败**。逐项核对：
+  - 12 条腿全绿，含三条 py3.10：ubuntu 测试步 145s / 全程 189s、macOS 307s / 418s、
+    windows 605s / 741s——三条腿都真实执行了 step 5，不是被跳过；
+  - `ruff` / `mypy` / `AGENTS.md integrity` 全绿；
+  - `extras` 双腿首次真实执行并 success（ubuntu 626s、macOS 879s），且
+    **step 6 `Coverage gate (hard floors)` 为 success**（82/80/95 三条逐模块下限真的比过了，
+    不是 §4.9 那种「无数据」假绿）；
+  - 产物 **28 个**：`coverage-*` 14 + `junit-*` 14（12 腿 + extras 双腿各一份），
+    `junit-extras-macos-*` / `coverage-extras-macos-*` 均在；
+  - `e2e` chromium 67s、firefox 122s 全绿；
+  - 同 push 的 Benchmark run **42200923177** success，gh-pages 连续推进
+    `bf2acf93`(37d7b7f) → `0b859dd8`(5cc0781)——新推送工具连续三轮真实生效。
+- 中间态如实保留：`37d7b7f` 的 CI run **42198208112** 是 failure（windows 四腿绿、
+  ubuntu + macOS 八腿红，见 11.6）。它同时证明两件事：py3.10 的原始缺陷确已被第一版修好，
+  而第一版的反向对照在 POSIX 上是另一种死法。
 - 遗留：① `schedule` 分支的 gh-pages 推送在新工具下尚无样本，下一轮 nightly 才是首验；
   ② `tools/ci/push_gh_pages.py::_git` 用 `text=True` 未显式给 `encoding`（`errors="replace"`
   故不崩，只在非 ASCII git 诊断上 mojibake，且该脚本只在 ubuntu/py3.12 跑）→ 记录不动；

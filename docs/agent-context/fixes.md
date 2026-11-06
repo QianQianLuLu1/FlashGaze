@@ -662,3 +662,11 @@
   str (not "NoneType")` 判红（POSIX 腿则是 `UnicodeDecodeError` 判红——两种死法都算红，
   这正是把断言降到字节层后剩下的唯一平台差异，且方向是「更响」不是「更静默」）；
   还原后 16 passed、`git diff` 无残留；`ruff check` / `mypy` 两面（82 files）全绿。
+- **CI 终验（run 42200923304 = `5cc0781`，push）**：**success**，21 个 job = 20 success +
+  1 skipped（webkit 是设计上的非门禁 job）、**0 失败**。三条 py3.10 腿全绿且测试步真实执行
+  （ubuntu 145s / macOS 307s / windows 605s）；`extras` 双腿首次真实执行并 success
+  （ubuntu 626s / macOS 879s）且 **step 6 `Coverage gate (hard floors)` success**
+  （不是 §4.9 那类「无数据」假绿）；产物 28 个 = `coverage-*` 14 + `junit-*` 14；
+  `e2e` chromium 67s / firefox 122s 全绿；同 push 的 Benchmark 42200923177 success，
+  gh-pages 连续推进 `bf2acf93` → `0b859dd8`。中间态 `37d7b7f`（run 42198208112）为 failure，
+  已如实留在 11.6 与 §3.15，不当作没发生。
