@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794442450842,
+  "lastUpdate": 1794525597362,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "Benchmark": [
@@ -3054,6 +3054,89 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000007480994000535901",
             "extra": "mean: 632.7859000066383 usec\nrounds: 10"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "FlashGaze Init",
+            "email": "init@flashgaze.local"
+          },
+          "committer": {
+            "name": "FlashGaze Init",
+            "email": "init@flashgaze.local"
+          },
+          "id": "8d35cee54aa340a9a5abdb85f86b9ffbc058208f",
+          "message": "docs(ci): §11 补本轮的五项口径与 tip 运行结论，并说明那几条 cancelled 不是失败\n\n§1–§5 五项口径是为 gh-pages 那轮写的，第四轮（§11）此前只给了根因/修法/红绿表，读者要自己\n推断五项是否沿用。补 §11.0 逐条写死：依赖 0 新增（git diff 只有 tests/ 与 docs/）、启动与验证\n命令、错误处理（不动生产分支，被测工具的 rc=2 与四类分类语义保持；新增的是测试侧「解码失败在\nPOSIX 抛异常、在 Windows 返回 None」这一口径）、参数校验（复用 _run 的 encoding 入参，守卫无\n入参、不设白名单）、基础测试用例（指向 11.4 的正常/异常/边界三类红绿表）。\n\n另记录文档跟进提交的远端结果：8b1345d / 5232bbe / 50c4713 的 CI 因 concurrency.cancel-in-progress\n被后续推送取消 —— cancelled 不是 failure，是我连推文档的副作用；tip 475633d 的 CI run\n42206547889 = success（21 job，0 非绿）、Benchmark 42206548111 = success，gh-pages 推进到\nf8bef9a8。纯文档，无代码改动。",
+          "timestamp": "2026-11-06T11:30:30Z",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/8d35cee54aa340a9a5abdb85f86b9ffbc058208f"
+        },
+        "date": 1794525597046,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_small_20",
+            "value": 13.58508586525904,
+            "unit": "iter/sec",
+            "range": "stddev: 0.007639921713768707",
+            "extra": "mean: 73.6101346666705 msec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_batch_bench.py::test_score_batch_full_100_2000x1500",
+            "value": 0.3707942851941871,
+            "unit": "iter/sec",
+            "range": "stddev: 0.028954873911528435",
+            "extra": "mean: 2.6969131939999946 sec\nrounds: 3"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_2000x1500",
+            "value": 13.637534612425618,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0024391926701879795",
+            "extra": "mean: 73.32703662499718 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_evaluate_512x384",
+            "value": 233.73914734516916,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006523135811947712",
+            "extra": "mean: 4.2782735000024275 msec\nrounds: 8"
+          },
+          {
+            "name": "benchmarks/test_cv_engine_bench.py::test_compute_sharpness_inmemory",
+            "value": 3056.470866066163,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009363126833155915",
+            "extra": "mean: 327.1747200676092 usec\nrounds: 1779"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_decode_bgr_jpeg_2000x1500",
+            "value": 21.372157710066766,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006619641100565661",
+            "extra": "mean: 46.78984750000126 msec\nrounds: 10"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_downscale_inter_area_3840",
+            "value": 49.4164180953313,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00040338049333147843",
+            "extra": "mean: 20.236189479999496 msec\nrounds: 50"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_encode_bgr_b64_2000x1500",
+            "value": 106.91539958682137,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00021392213729396736",
+            "extra": "mean: 9.353189567307778 msec\nrounds: 104"
+          },
+          {
+            "name": "benchmarks/test_image_io_bench.py::test_iter_images_scan",
+            "value": 2042.9405677942846,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000010228673168608097",
+            "extra": "mean: 489.4905000000449 usec\nrounds: 10"
           }
         ]
       }
