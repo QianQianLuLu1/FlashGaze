@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794447906266,
+  "lastUpdate": 1794530056845,
   "repoUrl": "https://github.com/QianQianLuLu1/FlashGaze",
   "entries": {
     "FlashGaze Extras Coverage": [
@@ -1155,6 +1155,61 @@ window.BENCHMARK_DATA = {
             "range": "RANGE",
             "unit": "%",
             "extra": "2026-11-12T01:44:55.026691+00:00"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "name": "FlashGaze Init",
+            "email": "init@flashgaze.local"
+          },
+          "committer": {
+            "name": "FlashGaze Init",
+            "email": "init@flashgaze.local"
+          },
+          "id": "8d35cee54aa340a9a5abdb85f86b9ffbc058208f",
+          "message": "docs(ci): §11 补本轮的五项口径与 tip 运行结论，并说明那几条 cancelled 不是失败\n\n§1–§5 五项口径是为 gh-pages 那轮写的，第四轮（§11）此前只给了根因/修法/红绿表，读者要自己\n推断五项是否沿用。补 §11.0 逐条写死：依赖 0 新增（git diff 只有 tests/ 与 docs/）、启动与验证\n命令、错误处理（不动生产分支，被测工具的 rc=2 与四类分类语义保持；新增的是测试侧「解码失败在\nPOSIX 抛异常、在 Windows 返回 None」这一口径）、参数校验（复用 _run 的 encoding 入参，守卫无\n入参、不设白名单）、基础测试用例（指向 11.4 的正常/异常/边界三类红绿表）。\n\n另记录文档跟进提交的远端结果：8b1345d / 5232bbe / 50c4713 的 CI 因 concurrency.cancel-in-progress\n被后续推送取消 —— cancelled 不是 failure，是我连推文档的副作用；tip 475633d 的 CI run\n42206547889 = success（21 job，0 非绿）、Benchmark 42206548111 = success，gh-pages 推进到\nf8bef9a8。纯文档，无代码改动。",
+          "timestamp": "2026-11-06T11:30:30Z",
+          "url": "https://github.com/QianQianLuLu1/FlashGaze/commit/8d35cee54aa340a9a5abdb85f86b9ffbc058208f"
+        },
+        "date": 1794530056409,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "flashgaze.mcp_server",
+            "value": 87.71,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-11-13T00:34:05.734397+00:00"
+          },
+          {
+            "name": "flashgaze.webui.app",
+            "value": 85.77,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-11-13T00:34:05.734397+00:00"
+          },
+          {
+            "name": "flashgaze.core.xlsx_exporter",
+            "value": 100,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-11-13T00:34:05.734397+00:00"
+          },
+          {
+            "name": "flashgaze.core.deduplicator",
+            "value": 83.72,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-11-13T00:34:05.734397+00:00"
+          },
+          {
+            "name": "flashgaze.core.portrait_engine",
+            "value": 51.11,
+            "range": "RANGE",
+            "unit": "%",
+            "extra": "2026-11-13T00:34:05.734397+00:00"
           }
         ]
       }
